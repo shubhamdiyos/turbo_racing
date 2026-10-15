@@ -573,6 +573,8 @@ window.resumeGame = () => {
   if (state !== 'PAUSED') return;
   document.getElementById('pauseModal').style.display = 'none';
   document.getElementById('settingsModal').style.display = 'none';
+  // Backgrounding suspends the AudioContext; resume() it on the way back in
+  sound.init(() => state === 'PLAYING');
   sound.isPaused = false;
   state = 'PLAYING';
 };
@@ -793,6 +795,7 @@ function startRun(withMorph) {
     document.getElementById('speedLines').style.opacity = '0';
     sound.speakAnnouncer("LET'S GO!");
   }
+  sound.init(() => state === 'PLAYING');
   sound.isPaused = false;
   state = 'PLAYING';
 }
@@ -1071,3 +1074,25 @@ window.addEventListener('resize', () => {
 syncUI();
 syncSettingsUI();
 animate();
+
+// --- APP BACKGROUNDING + ANDROID HARDWARE BACK BUTTON ---
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (state === 'PLAYING') window.pauseGame();
+    if (sound.ctx && sound.ctx.state === 'running') sound.ctx.suspend();
+  } else if (!document.hidden && state !== 'PAUSED') {
+    if (sound.ctx && sound.ctx.state === 'suspended') sound.ctx.resume();
+  }
+});
+
+if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+  window.Capacitor.Plugins.App.addListener('backButton', () => {
+    if (document.getElementById('settingsModal').style.display === 'flex') {
+      window.closeSettings();
+    } else if (state === 'PLAYING') {
+      window.pauseGame();
+    } else if (state === 'PAUSED') {
+      window.resumeGame();
+    }
+  });
+}
