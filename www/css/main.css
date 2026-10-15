@@ -39,6 +39,10 @@ canvas { width: 100% !important; height: 100% !important; display: block; }
 .hud-pill.gold::before { background: var(--gold); box-shadow: 0 0 10px var(--gold); }
 .hud-pill.combo { color: var(--lime); border-color: rgba(89, 255, 168, 0.45); display: none; }
 .hud-pill.combo::before { background: var(--lime); box-shadow: 0 0 12px var(--lime); }
+.hud-pill.magnet { display: none; color: #ffd9e6; border-color: rgba(255, 46, 126, 0.45); font-size: 14px; }
+.hud-pill.magnet::before { background: var(--magenta); box-shadow: 0 0 12px var(--magenta); }
+.mag-track { display: block; width: 46px; height: 5px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+#magnetBarFill { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, var(--magenta), #ffd9e6); box-shadow: 0 0 10px rgba(255, 46, 126, 0.85); transition: width 0.08s linear; }
 
 .icon-btn { background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid var(--hair-strong); color: var(--txt); width: 40px; height: 40px; clip-path: var(--cut-sm); font-size: 17px; font-weight: 700; cursor: pointer; box-shadow: var(--lift), 0 8px 20px rgba(0, 0, 0, 0.55); display: flex; justify-content: center; align-items: center; transition: transform 0.09s, border-color 0.15s; }
 .icon-btn.pink { border-color: rgba(255, 46, 126, 0.6); color: #ffd9e6; }

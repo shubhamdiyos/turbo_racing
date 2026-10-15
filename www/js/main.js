@@ -390,9 +390,9 @@ function emitPlasmaExhaust(isMorphed, isShifting) {
   // view axis, so every state emits sparingly and stays small.
   if (isMorphed && tick % (jetMorph ? 3 : 2) !== 0) return;
   if (!isMorphed && tick % 2 !== 0) return;
-  const baseOffsets = jetMorph ? [-0.24, 0.24] : [-0.44, 0.44];
-  const baseY = jetMorph ? JET_Y + 0.02 : (isMorphed ? 0.58 : 0.38);
-  const backZ = jetMorph ? 3.35 : (isMorphed ? 2.7 : 2.25);
+  const baseOffsets = jetMorph ? [-0.24, 0.24] : (isMorphed ? [-0.64, 0.64] : [-0.44, 0.44]);
+  const baseY = jetMorph ? JET_Y + 0.02 : (isMorphed ? 0.85 : 0.38);
+  const backZ = jetMorph ? 3.35 : (isMorphed ? 3.25 : 2.25);
   const initScale = isMorphed ? (jetMorph ? 0.15 : 0.24) : (isShifting ? 0.34 : 0.3);
 
   baseOffsets.forEach(ox => {
@@ -874,9 +874,10 @@ function updatePlayerPaint() {
 let lane = 1, playerY = 0, velY = 0;
 let speed = 0.82, score = 0, runCoins = 0, smashes = 0, nearMisses = 0, combo = 1, comboTimer = 0;
 let morphTimer = 0, morphMaxFrames = 480, shieldTimer = 0, shakeIntensity = 0;
+let magnetTimer = 0, magnetMax = 1, nextMagnetIn = 150;
 let morphPunch = 0;
 let nextMilestone = 500;
-let obstacles = [], coins = [], particles = [], brainGateGroup = null;
+let obstacles = [], coins = [], magnetPickups = [], particles = [], brainGateGroup = null;
 let showroomAngle = 0.6, isDraggingShowroom = false, lastDragX = 0;
 
 function spawnExplosion3D(pos, hexColor, count = 24) {
@@ -1064,6 +1065,7 @@ window.quitToGarage = () => {
   if (brainGateGroup) { scene.remove(brainGateGroup); brainGateGroup = null; }
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
   coins.forEach(c => scene.remove(c)); coins = [];
+  clearMagnetState();
 
   document.getElementById('brainBanner').style.display = 'none';
   document.getElementById('morphHud').style.display = 'none';
@@ -1285,6 +1287,7 @@ function startRun(withMorph) {
 
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
   coins.forEach(c => scene.remove(c)); coins = [];
+  clearMagnetState();
   if (brainGateGroup) { scene.remove(brainGateGroup); brainGateGroup = null; }
   document.getElementById('brainBanner').style.display = 'none';
 
@@ -1338,6 +1341,7 @@ function triggerCrash() {
 
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
   coins.forEach(c => scene.remove(c)); coins = [];
+  clearMagnetState();
 
   const finalDist = Math.floor(score);
   const isNewRecord = finalDist > save.best;
@@ -1373,6 +1377,42 @@ function spawnEnemyTrafficCar(laneIndex) {
 let tick = 0;
 const coinGeo = new THREE.TorusGeometry(0.48, 0.16, 12, 24);
 const coinMat = new THREE.MeshPhysicalMaterial({ color: 0xffd700, emissive: 0xaa5500, metalness: 0.95, roughness: 0.08, clearcoat: 1.0 });
+
+// Horseshoe magnet pickup: merged red body + silver poles, one draw call each
+const magnetShellGeo = (() => {
+  const parts = [
+    new THREE.TorusGeometry(0.4, 0.125, 10, 20, Math.PI),
+    new THREE.CylinderGeometry(0.125, 0.125, 0.52, 10).translate(-0.4, -0.26, 0),
+    new THREE.CylinderGeometry(0.125, 0.125, 0.52, 10).translate(0.4, -0.26, 0)
+  ].map(g => g.index ? g.toNonIndexed() : g);
+  return mergeGeometries(parts, false);
+})();
+const magnetPoleGeo = (() => {
+  const parts = [
+    new THREE.CylinderGeometry(0.125, 0.125, 0.17, 10).translate(-0.4, -0.6, 0),
+    new THREE.CylinderGeometry(0.125, 0.125, 0.17, 10).translate(0.4, -0.6, 0)
+  ].map(g => g.index ? g.toNonIndexed() : g);
+  return mergeGeometries(parts, false);
+})();
+const magnetShellMat = new THREE.MeshStandardMaterial({ color: 0xc81050, emissive: 0xff2e7e, emissiveIntensity: 0.7, metalness: 0.3, roughness: 0.34 });
+const magnetPoleMat = new THREE.MeshPhysicalMaterial({ color: 0xdfe9ff, metalness: 0.95, roughness: 0.18, envMapIntensity: 0.8 });
+
+function spawnMagnetPickup(lane) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(magnetShellGeo, magnetShellMat));
+  g.add(new THREE.Mesh(magnetPoleGeo, magnetPoleMat));
+  g.position.set(LANES[lane], 1.1, -112);
+  scene.add(g);
+  magnetPickups.push(g);
+}
+
+function clearMagnetState() {
+  magnetPickups.forEach(m => scene.remove(m));
+  magnetPickups = [];
+  magnetTimer = 0;
+  nextMagnetIn = 150;
+  document.getElementById('magnetPill').style.display = 'none';
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1440,10 +1480,12 @@ function animate() {
   }
 
   const isJetMorph = morphTimer > 0 && spec.type === 'jet';
-  const nozzleTargetY = morphTimer > 0 ? (isJetMorph ? JET_Y - 0.38 + jetBob : 0.2) : 0.02;
-  const nozzleTargetX = isJetMorph ? 0.55 : 1;
+  const nozzleTargetY = morphTimer > 0 ? (isJetMorph ? JET_Y - 0.38 + jetBob : 0.45) : 0.02;
+  const nozzleTargetX = isJetMorph ? 0.55 : (morphTimer > 0 ? 1.45 : 1);
   afterburnerNozzles.position.y += (nozzleTargetY - afterburnerNozzles.position.y) * 0.18;
-  afterburnerNozzles.position.z += ((isJetMorph ? 0.4 : 0) - afterburnerNozzles.position.z) * 0.18;
+  // Truck shells sit 0.76 further aft than the car's, so the plumes need to clear the rear guard or
+  // they render buried inside the bodywork.
+  afterburnerNozzles.position.z += ((isJetMorph ? 0.4 : (morphTimer > 0 ? 0.95 : 0)) - afterburnerNozzles.position.z) * 0.18;
   afterburnerNozzles.scale.x += (nozzleTargetX - afterburnerNozzles.scale.x) * 0.18;
   const plumeLen = (0.72 + pulse * 0.45) * boostMult;
   const plumeGirth = 0.9 + Math.random() * 0.16;
@@ -1513,10 +1555,10 @@ function animate() {
   // PLAYING STATE
   afterburnerNozzles.visible = !isJetMorph;
   contactShadow.visible = false;
-  exhaustLight.position.y += ((isJetMorph ? JET_Y : 0.32) - exhaustLight.position.y) * 0.18;
-  // Parked well behind the bodywork: a hot point light inside the metal canshel blew the nozzle
-  // out to flat white and bloom smeared it into a ball.
-  exhaustLight.position.z += ((isJetMorph ? 4.2 : 3.3) - exhaustLight.position.z) * 0.18;
+  exhaustLight.position.y += ((isJetMorph ? JET_Y : (morphTimer > 0 ? 0.8 : 0.32)) - exhaustLight.position.y) * 0.18;
+  // Every rig parks its light behind its own bodywork. The truck's shell runs back to z 2.94, so the
+  // car's z 3.3 buried a candela point light inside the rear panel and blew it out to a white ball.
+  exhaustLight.position.z += ((isJetMorph ? 4.2 : (morphTimer > 0 ? 4.7 : 3.3)) - exhaustLight.position.z) * 0.18;
   exhaustLight.intensity = morphTimer > 0 ? 0.8 + Math.random() * 0.3 : (1.3 + Math.random() * 0.6) * boostMult;
   bloomPass.threshold = morphTimer > 0 ? 1.1 : 0.95;
   underglow.material.opacity = morphTimer > 0 ? 0.14 : 0.18;
@@ -1601,10 +1643,12 @@ function animate() {
   }
 
   if (tick % 32 === 0) {
-    const cLane = Math.floor(Math.random() * 3);
+    // Weaving runs make you steer for the payout; straight runs reward holding a line
+    const weave = Math.random() < 0.4;
+    const cLane = weave ? Math.floor(Math.random() * 2) : Math.floor(Math.random() * 3);
     for (let i = 0; i < 4; i++) {
       const c = new THREE.Mesh(coinGeo, coinMat);
-      c.position.set(LANES[cLane], 0.95, -120 - i * 4.8);
+      c.position.set(LANES[cLane + (weave && i % 2 ? 1 : 0)], 0.95, -120 - i * 4.8);
       scene.add(c);
       coins.push(c);
     }
@@ -1616,16 +1660,19 @@ function animate() {
     spawnEnemyTrafficCar(Math.floor(Math.random() * 3));
   }
 
-  // Update Gold Rings (with Nitro Magnet Range)
-  const magnetRange = morphTimer > 0 ? 30 : (8 + save.nitroLevel * 2.5);
+  // Gold rings only fly to the car while a magnet (or a morph) is running - otherwise you have
+  // to steer into their lane to bank them.
+  const pullRange = morphTimer > 0 ? 26 : (magnetTimer > 0 ? 8 + save.nitroLevel * 1.2 : 0);
+  const pullWidth = morphTimer > 0 ? 4.4 : 5.4;
+  const grabWidth = morphTimer > 0 ? 1.9 : 1.15;
   for (let i = coins.length - 1; i >= 0; i--) {
     const c = coins[i];
     c.position.z += speed * 1.4;
     c.rotation.y += 0.09;
-    if (c.position.z > -magnetRange && Math.abs(c.position.x - playerRoot.position.x) < (morphTimer > 0 ? 7 : 3.4)) {
-      c.position.x += (playerRoot.position.x - c.position.x) * 0.22;
+    if (pullRange && c.position.z > -pullRange && Math.abs(c.position.x - playerRoot.position.x) < pullWidth) {
+      c.position.x += (playerRoot.position.x - c.position.x) * 0.2;
     }
-    if (Math.abs(c.position.z - playerRoot.position.z) < 2.3 && Math.abs(c.position.x - playerRoot.position.x) < 1.65) {
+    if (Math.abs(c.position.z - playerRoot.position.z) < 1.9 && Math.abs(c.position.x - playerRoot.position.x) < grabWidth) {
       const earned = combo;
       save.coins += earned; runCoins += earned;
       sound.playCoinChime(runCoins);
@@ -1634,6 +1681,36 @@ function animate() {
     } else if (c.position.z > 12) {
       scene.remove(c); coins.splice(i, 1);
     }
+  }
+
+  // The magnet is a treat you have to earn: never let a pickup hit the road while one is already
+  // active or while a morph is vacuuming, otherwise the two overlap and coins look automatic.
+  if (nextMagnetIn > 0) nextMagnetIn--;
+  else if (magnetPickups.length === 0 && magnetTimer === 0 && morphTimer === 0) {
+    spawnMagnetPickup(Math.floor(Math.random() * 3));
+    nextMagnetIn = 780 + Math.floor(Math.random() * 300);
+  }
+  for (let i = magnetPickups.length - 1; i >= 0; i--) {
+    const m = magnetPickups[i];
+    m.position.z += speed * 1.4;
+    m.rotation.y += 0.055;
+    m.position.y = 1.1 + Math.sin(tick * 0.11) * 0.13;
+    if (Math.abs(m.position.z - playerRoot.position.z) < 2.1 && Math.abs(m.position.x - playerRoot.position.x) < 1.5) {
+      magnetTimer = magnetMax = 240 + save.nitroLevel * 18;
+      document.getElementById('magnetPill').style.display = 'flex';
+      sound.playMorphPowerup();
+      showComicPopup('🧲 MAGNET!', '#ff2e7e');
+      spawnExplosion3D(m.position, 0xff2e7e, 16);
+      scene.remove(m); magnetPickups.splice(i, 1);
+    } else if (m.position.z > 12) {
+      scene.remove(m); magnetPickups.splice(i, 1);
+    }
+  }
+
+  if (magnetTimer > 0) {
+    magnetTimer--;
+    document.getElementById('magnetBarFill').style.width = `${(magnetTimer / magnetMax) * 100}%`;
+    if (magnetTimer === 0) document.getElementById('magnetPill').style.display = 'none';
   }
 
   // Update Reflex Gate
