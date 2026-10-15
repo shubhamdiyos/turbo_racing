@@ -1,13 +1,37 @@
 export class AAASoundSystem {
   constructor() {
     this.ctx = null;
-    this.muted = false;
+    this.musicEnabled = true;
+    this.sfxEnabled = true;
+    this.voiceEnabled = true;
+    this.hapticsEnabled = true;
+    this.isPaused = false;
     this.rpm = 0.2;
     this.gear = 1;
     this.lastGear = 1;
     this.bgmStep = 0;
     this.bgmInterval = null;
     this.isPlayingGetter = () => false;
+  }
+
+  applySettings(settings) {
+    this.musicEnabled = settings.music !== false;
+    this.sfxEnabled = settings.sfx !== false;
+    this.voiceEnabled = settings.voice !== false;
+    this.hapticsEnabled = settings.haptics !== false;
+    if (!this.sfxEnabled && this.engGain && this.ctx) {
+      this.engGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.05);
+    }
+    if (!this.voiceEnabled && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  vibrate(ms = 25) {
+    if (!this.hapticsEnabled) return;
+    if (navigator.vibrate) {
+      try { navigator.vibrate(ms); } catch (e) {}
+    }
   }
 
   init(isPlayingCallback) {
@@ -69,15 +93,20 @@ export class AAASoundSystem {
   }
 
   updateEngine(speedRatio, isPlaying, isMorphed, morphType) {
-    if (!this.ctx || this.muted) return;
+    if (!this.ctx) return;
     const now = this.ctx.currentTime;
+
+    if (!this.sfxEnabled || this.isPaused) {
+      this.engGain.gain.setTargetAtTime(0.0001, now, 0.06);
+      return;
+    }
 
     if (!isPlaying) {
       const idlePulse = 46 + Math.sin(now * 6) * 3;
       this.osc1.frequency.setTargetAtTime(idlePulse, now, 0.08);
       this.osc2.frequency.setTargetAtTime(idlePulse * 0.5, now, 0.08);
       this.engFilter.frequency.setTargetAtTime(190, now, 0.1);
-      this.engGain.gain.setTargetAtTime(0.06, now, 0.15);
+      this.engGain.gain.setTargetAtTime(0.05, now, 0.15);
       return;
     }
 
@@ -102,10 +131,10 @@ export class AAASoundSystem {
   }
 
   triggerExhaustBackfire() {
-    if (!this.ctx || this.muted) return;
+    if (!this.ctx || !this.sfxEnabled || this.isPaused) return;
     [0, 0.07].forEach(delay => {
       setTimeout(() => {
-        if (!this.ctx || this.muted) return;
+        if (!this.ctx || !this.sfxEnabled || this.isPaused) return;
         const bufSize = this.ctx.sampleRate * 0.06;
         const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
         const data = buf.getChannelData(0);
@@ -128,7 +157,8 @@ export class AAASoundSystem {
   }
 
   playTireScreech() {
-    if (!this.ctx || this.muted) return;
+    if (!this.ctx || !this.sfxEnabled) return;
+    this.vibrate(15);
     const dur = 0.14;
     const bufSize = this.ctx.sampleRate * dur;
     const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
@@ -153,7 +183,8 @@ export class AAASoundSystem {
   }
 
   playJumpWhoosh() {
-    if (!this.ctx || this.muted) return;
+    if (!this.ctx || !this.sfxEnabled) return;
+    this.vibrate(20);
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     o.type = 'triangle';
@@ -166,7 +197,8 @@ export class AAASoundSystem {
   }
 
   playCoinChime(comboIndex) {
-    if (!this.ctx || this.muted) return;
+    if (!this.ctx || !this.sfxEnabled) return;
+    this.vibrate(10);
     const notes = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.5];
     const freq = notes[comboIndex % notes.length];
     const now = this.ctx.currentTime;
@@ -183,24 +215,27 @@ export class AAASoundSystem {
   }
 
   playMorphPowerup() {
-    if (!this.ctx || this.muted) return;
-    const now = this.ctx.currentTime;
-    [261.6, 329.6, 392.0, 523.2, 659.2].forEach((f, i) => {
-      const o = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(f, now + i * 0.055);
-      o.frequency.exponentialRampToValueAtTime(f * 1.5, now + i * 0.055 + 0.25);
-      g.gain.setValueAtTime(0.15, now + i * 0.055);
-      g.gain.exponentialRampToValueAtTime(0.008, now + i * 0.055 + 0.25);
-      o.connect(g); g.connect(this.master);
-      o.start(now + i * 0.055); o.stop(now + i * 0.055 + 0.25);
-    });
+    this.vibrate([40, 30, 60]);
+    if (this.ctx && this.sfxEnabled) {
+      const now = this.ctx.currentTime;
+      [261.6, 329.6, 392.0, 523.2, 659.2].forEach((f, i) => {
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(f, now + i * 0.055);
+        o.frequency.exponentialRampToValueAtTime(f * 1.5, now + i * 0.055 + 0.25);
+        g.gain.setValueAtTime(0.15, now + i * 0.055);
+        g.gain.exponentialRampToValueAtTime(0.008, now + i * 0.055 + 0.25);
+        o.connect(g); g.connect(this.master);
+        o.start(now + i * 0.055); o.stop(now + i * 0.055 + 0.25);
+      });
+    }
     this.speakAnnouncer("MEGA MORPH!");
   }
 
   playCrashImpact() {
-    if (!this.ctx || this.muted) return;
+    this.vibrate([80, 40, 120]);
+    if (!this.ctx || !this.sfxEnabled) return;
     const dur = 0.45;
     const bufSize = this.ctx.sampleRate * dur;
     const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
@@ -221,7 +256,7 @@ export class AAASoundSystem {
   }
 
   speakAnnouncer(text) {
-    if (this.muted || !('speechSynthesis' in window)) return;
+    if (!this.voiceEnabled || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.25; u.pitch = 1.15; u.volume = 0.85;
@@ -232,7 +267,7 @@ export class AAASoundSystem {
     const bassNotes = [65.41, 65.41, 77.78, 65.41, 87.31, 87.31, 98.00, 77.78];
     const arpNotes  = [261.6, 311.1, 392.0, 523.2, 392.0, 311.1, 349.2, 440.0];
     this.bgmInterval = setInterval(() => {
-      if (!this.ctx || this.muted || this.ctx.state !== 'running') return;
+      if (!this.ctx || !this.musicEnabled || this.isPaused || this.ctx.state !== 'running') return;
       const now = this.ctx.currentTime;
       const step = this.bgmStep % 8;
 

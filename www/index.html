@@ -27,7 +27,8 @@
     </div>
     <div class="hud-right">
       <div class="hud-pill">🏁 <span id="scoreVal">0</span>m</div>
-      <button class="sound-btn" id="muteBtn" onclick="window.toggleMute()">🔊</button>
+      <button class="icon-btn" id="pauseBtn" style="display:none;" title="Pause Game" onclick="window.pauseGame()">⏸</button>
+      <button class="icon-btn pink" id="settingsBtn" title="Game Settings" onclick="window.openSettings()">⚙️</button>
     </div>
   </div>
 
@@ -64,6 +65,57 @@
         <button class="btn-sub" id="reviveBtn" style="display:none;" onclick="window.watchAdRevive()">📺 Revive Run!</button>
         <button class="btn-sub cyan" id="upgradeBtn" onclick="window.upgradeNitro()">⚡ NITRO LV.1<br><span class='coin-icon' style='width:14px;height:14px;vertical-align:middle;'></span> 150</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Mid-Game PAUSE Modal (Resume, Restart, Settings, Quit to Garage) -->
+  <div class="dialog-backdrop" id="pauseModal">
+    <div class="dialog-card">
+      <div class="dialog-title">RACE PAUSED</div>
+      <div class="dialog-stats" id="pauseStatsTxt">DISTANCE: 0m  |  RUN COINS: +0</div>
+
+      <button class="modal-btn green" onclick="window.resumeGame()">▶ RESUME RACE</button>
+      <button class="modal-btn blue" onclick="window.restartRace()">🔄 RESTART RUN</button>
+      <button class="modal-btn gold" onclick="window.openSettings()">⚙️ SETTINGS</button>
+      <button class="modal-btn red" onclick="window.quitToGarage()">🏠 QUIT TO GARAGE</button>
+    </div>
+  </div>
+
+  <!-- Full Arcade SETTINGS Modal (Music, SFX, Voice, Haptics, Steering Mode) -->
+  <div class="dialog-backdrop" id="settingsModal">
+    <div class="dialog-card">
+      <div class="dialog-title">SETTINGS ⚙️</div>
+
+      <div class="setting-row">
+        <div class="setting-label">🎵 Music (BGM)</div>
+        <button class="toggle-pill on" id="toggleMusicBtn" onclick="window.toggleSetting('music')">ON</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">🔊 Engine &amp; SFX</div>
+        <button class="toggle-pill on" id="toggleSfxBtn" onclick="window.toggleSetting('sfx')">ON</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">🗣️ Voice Announcer</div>
+        <button class="toggle-pill on" id="toggleVoiceBtn" onclick="window.toggleSetting('voice')">ON</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">📳 Vibration</div>
+        <button class="toggle-pill on" id="toggleHapticsBtn" onclick="window.toggleSetting('haptics')">ON</button>
+      </div>
+
+      <div style="text-align:left; font-size:12px; font-weight:900; color:#00f2fe; letter-spacing:1px; margin-top:4px;">
+        🎮 STEERING CONTROLS:
+      </div>
+      <div class="control-group">
+        <button class="ctrl-chip" id="ctrlSwipe" onclick="window.setControlMode('swipe')">👆 SWIPE</button>
+        <button class="ctrl-chip" id="ctrlTap" onclick="window.setControlMode('tap')">👈👉 TAP EDGES</button>
+        <button class="ctrl-chip active" id="ctrlBoth" onclick="window.setControlMode('both')">⚡ BOTH</button>
+      </div>
+
+      <button class="modal-btn green" style="margin-top:6px;" onclick="window.closeSettings()">✓ SAVE &amp; CLOSE</button>
     </div>
   </div>
 </div>

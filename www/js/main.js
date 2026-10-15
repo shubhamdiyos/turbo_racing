@@ -10,8 +10,12 @@ import { AAASoundSystem } from './audio.js';
 import { AdManager } from './ads.js';
 
 let save = JSON.parse(localStorage.getItem('tm3d_arcade_v3')) || {
-  coins: 500, best: 0, selectedCar: 0, unlocked: [0], nitroLevel: 1
+  coins: 500, best: 0, selectedCar: 0, unlocked: [0], nitroLevel: 1,
+  settings: { music: true, sfx: true, voice: true, haptics: true, controls: 'both' }
 };
+if (!save.settings) {
+  save.settings = { music: true, sfx: true, voice: true, haptics: true, controls: 'both' };
+}
 
 const CAR_SPECS = [
   { name: "FERRARI 458 CYBER", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "🦖 Mecha Rex-Truck", type: "truck" },
@@ -20,19 +24,13 @@ const CAR_SPECS = [
   { name: "ROYAL GOLD 458", hex: 0xffb800, rimHex: 0xffffff, flameHex: 0xffae00, price: 1500, morph: "✈️ Golden Valkyrie Jet", type: "jet" }
 ];
 
-let state = 'MENU';
+let state = 'MENU'; // 'MENU' | 'PLAYING' | 'PAUSED'
 const sound = new AAASoundSystem();
+sound.applySettings(save.settings);
 AdManager.init();
 
 window.addEventListener('pointerdown', () => sound.init(() => state === 'PLAYING'), { once: true });
 window.addEventListener('keydown', () => sound.init(() => state === 'PLAYING'), { once: true });
-
-window.toggleMute = () => {
-  sound.init(() => state === 'PLAYING');
-  sound.muted = !sound.muted;
-  if (sound.master) sound.master.gain.value = sound.muted ? 0 : 0.85;
-  document.getElementById('muteBtn').innerText = sound.muted ? '🔇' : '🔊';
-};
 
 function showComicPopup(text, color = '#ffea00') {
   const el = document.getElementById('comicPopup');
@@ -520,20 +518,157 @@ function triggerJump() {
 }
 
 window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+    if (state === 'PLAYING') window.pauseGame();
+    else if (state === 'PAUSED') window.resumeGame();
+    return;
+  }
   if (e.key === 'ArrowLeft' || e.key === 'a') shiftLane(-1);
   if (e.key === 'ArrowRight' || e.key === 'd') shiftLane(1);
   if (e.key === 'ArrowUp' || e.key === ' ') triggerJump();
 });
 
-let sx = 0, sy = 0;
-window.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; });
+// Touch Controls supporting SWIPE, TAP EDGES, or BOTH
+let sx = 0, sy = 0, stime = 0;
+window.addEventListener('touchstart', e => {
+  sx = e.touches[0].clientX;
+  sy = e.touches[0].clientY;
+  stime = Date.now();
+}, { passive: true });
+
 window.addEventListener('touchend', e => {
+  if (state !== 'PLAYING') return;
   const dx = e.changedTouches[0].clientX - sx;
   const dy = e.changedTouches[0].clientY - sy;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    if (Math.abs(dx) > 24) shiftLane(dx > 0 ? 1 : -1);
-  } else if (dy < -24) triggerJump();
-});
+  const dist = Math.hypot(dx, dy);
+  const mode = save.settings.controls || 'both';
+
+  // Swipe Handling
+  if ((mode === 'swipe' || mode === 'both') && dist > 24) {
+    if (Math.abs(dx) > Math.abs(dy)) shiftLane(dx > 0 ? 1 : -1);
+    else if (dy < -24) triggerJump();
+    return;
+  }
+
+  // Tap Left / Center / Right Screen Edge Handling
+  if ((mode === 'tap' || mode === 'both') && dist <= 24 && (Date.now() - stime) < 280) {
+    const rect = wrapper.getBoundingClientRect();
+    const relX = (e.changedTouches[0].clientX - rect.left) / rect.width;
+    if (relX < 0.36) shiftLane(-1);
+    else if (relX > 0.64) shiftLane(1);
+    else triggerJump();
+  }
+}, { passive: true });
+
+// --- PAUSE, RESUME, RESTART, QUIT & SETTINGS CONTROLLERS ---
+window.pauseGame = () => {
+  if (state !== 'PLAYING') return;
+  state = 'PAUSED';
+  sound.isPaused = true;
+  document.getElementById('pauseStatsTxt').innerText = `DISTANCE: ${Math.floor(score)}m  |  RUN COINS: +${runCoins}`;
+  document.getElementById('pauseModal').style.display = 'flex';
+};
+
+window.resumeGame = () => {
+  if (state !== 'PAUSED') return;
+  document.getElementById('pauseModal').style.display = 'none';
+  document.getElementById('settingsModal').style.display = 'none';
+  sound.isPaused = false;
+  state = 'PLAYING';
+};
+
+window.restartRace = () => {
+  document.getElementById('pauseModal').style.display = 'none';
+  sound.isPaused = false;
+  startRun(false);
+};
+
+window.quitToGarage = () => {
+  document.getElementById('pauseModal').style.display = 'none';
+  sound.isPaused = false;
+  state = 'MENU';
+  podiumGroup.visible = true;
+  morphTimer = 0;
+  playerCarMesh.visible = true;
+  monsterTruckGroup.visible = false;
+  cyberJetGroup.visible = false;
+
+  if (brainGateGroup) { scene.remove(brainGateGroup); brainGateGroup = null; }
+  obstacles.forEach(o => scene.remove(o)); obstacles = [];
+  coins.forEach(c => scene.remove(c)); coins = [];
+
+  document.getElementById('brainBanner').style.display = 'none';
+  document.getElementById('morphHud').style.display = 'none';
+  document.getElementById('rpmHud').style.display = 'none';
+  document.getElementById('pauseBtn').style.display = 'none';
+  document.getElementById('speedLines').style.opacity = '0';
+
+  save.best = Math.max(save.best, Math.floor(score));
+  syncUI();
+
+  document.getElementById('menuTitle').innerText = "TURBO MORPH";
+  document.getElementById('menuSub').innerText = `BEST: ${save.best}m  |  SAVED +${runCoins} COINS!`;
+  document.getElementById('reviveBtn').style.display = 'none';
+  document.getElementById('menuOverlay').style.display = 'flex';
+};
+
+let stateBeforeSettings = 'MENU';
+window.openSettings = () => {
+  sound.init(() => state === 'PLAYING');
+  if (state === 'PLAYING') {
+    stateBeforeSettings = 'PLAYING';
+    state = 'PAUSED';
+    sound.isPaused = true;
+  } else {
+    stateBeforeSettings = state;
+  }
+  syncSettingsUI();
+  document.getElementById('settingsModal').style.display = 'flex';
+};
+
+window.closeSettings = () => {
+  document.getElementById('settingsModal').style.display = 'none';
+  if (stateBeforeSettings === 'PLAYING' && document.getElementById('pauseModal').style.display !== 'flex') {
+    sound.isPaused = false;
+    state = 'PLAYING';
+  }
+};
+
+window.toggleSetting = (key) => {
+  save.settings[key] = !save.settings[key];
+  sound.applySettings(save.settings);
+  if (key === 'sfx' && save.settings.sfx) sound.playCoinChime(4);
+  syncSettingsUI();
+  syncUI();
+};
+
+window.setControlMode = (mode) => {
+  save.settings.controls = mode;
+  sound.playCoinChime(6);
+  syncSettingsUI();
+  syncUI();
+};
+
+function syncSettingsUI() {
+  const map = [
+    ['music', 'toggleMusicBtn'],
+    ['sfx', 'toggleSfxBtn'],
+    ['voice', 'toggleVoiceBtn'],
+    ['haptics', 'toggleHapticsBtn']
+  ];
+  map.forEach(([k, btnId]) => {
+    const el = document.getElementById(btnId);
+    if (!el) return;
+    const isOn = save.settings[k] !== false;
+    el.innerText = isOn ? 'ON' : 'OFF';
+    el.className = `toggle-pill ${isOn ? 'on' : 'off'}`;
+  });
+
+  const cMode = save.settings.controls || 'both';
+  document.getElementById('ctrlSwipe').classList.toggle('active', cMode === 'swipe');
+  document.getElementById('ctrlTap').classList.toggle('active', cMode === 'tap');
+  document.getElementById('ctrlBoth').classList.toggle('active', cMode === 'both');
+}
 
 function syncUI() {
   localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
@@ -610,9 +745,11 @@ window.watchAdRevive = () => {
   AdManager.showRewardedAd("Revive Run", () => {
     document.getElementById('menuOverlay').style.display = 'none';
     document.getElementById('rpmHud').style.display = 'flex';
+    document.getElementById('pauseBtn').style.display = 'flex';
     podiumGroup.visible = false;
     obstacles.forEach(o => scene.remove(o)); obstacles = [];
     activateMorphState(480 + save.nitroLevel * 45);
+    sound.isPaused = false;
     state = 'PLAYING';
   });
 };
@@ -634,7 +771,10 @@ function startRun(withMorph) {
     save.selectedCar = 0; updatePlayerPaint();
   }
   document.getElementById('menuOverlay').style.display = 'none';
+  document.getElementById('pauseModal').style.display = 'none';
+  document.getElementById('settingsModal').style.display = 'none';
   document.getElementById('rpmHud').style.display = 'flex';
+  document.getElementById('pauseBtn').style.display = 'flex';
   podiumGroup.visible = false;
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
   coins.forEach(c => scene.remove(c)); coins = [];
@@ -653,6 +793,7 @@ function startRun(withMorph) {
     document.getElementById('speedLines').style.opacity = '0';
     sound.speakAnnouncer("LET'S GO!");
   }
+  sound.isPaused = false;
   state = 'PLAYING';
 }
 
@@ -673,6 +814,7 @@ function triggerCrash() {
   document.getElementById('brainBanner').style.display = 'none';
   document.getElementById('morphHud').style.display = 'none';
   document.getElementById('rpmHud').style.display = 'none';
+  document.getElementById('pauseBtn').style.display = 'none';
   document.getElementById('speedLines').style.opacity = '0';
 
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
@@ -713,10 +855,17 @@ const coinMat = new THREE.MeshPhysicalMaterial({ color: 0xffd700, emissive: 0xaa
 
 function animate() {
   requestAnimationFrame(animate);
-  tick++;
 
   const spec = CAR_SPECS[save.selectedCar];
   sound.updateEngine(speed, state === 'PLAYING', morphTimer > 0, spec.type);
+
+  // Freeze scene simulation cleanly while PAUSED
+  if (state === 'PAUSED') {
+    composer.render();
+    return;
+  }
+
+  tick++;
 
   const pulse = 0.85 + Math.sin(tick * 0.65) * 0.28;
   const boostMult = morphTimer > 0 ? 1.85 : (state === 'PLAYING' ? 1.15 : 0.45);
@@ -920,4 +1069,5 @@ window.addEventListener('resize', () => {
 });
 
 syncUI();
+syncSettingsUI();
 animate();
