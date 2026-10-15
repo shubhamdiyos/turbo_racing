@@ -1,0 +1,46 @@
+* { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; margin: 0; padding: 0; }
+body { background: #020008; overflow: hidden; font-family: 'Nunito', sans-serif; height: 100vh; width: 100vw; display: flex; justify-content: center; align-items: center; touch-action: none; }
+#gameWrapper { position: relative; width: 100%; height: 100%; max-width: 520px; max-height: 960px; overflow: hidden; box-shadow: 0 0 90px rgba(0, 242, 254, 0.55); background: #050112; }
+canvas { width: 100% !important; height: 100% !important; display: block; }
+
+#loaderBadge { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(10,4,30,0.92); border: 3px solid #00f2fe; color: #fff; font-family: 'Titan One', cursive; font-size: 18px; padding: 14px 26px; border-radius: 99px; z-index: 50; box-shadow: 0 0 30px #00f2fe; pointer-events: none; transition: opacity 0.3s; white-space: nowrap; }
+#speedLines { position: absolute; inset: 0; pointer-events: none; z-index: 5; opacity: 0; transition: opacity 0.25s; background: radial-gradient(circle, transparent 42%, rgba(0, 242, 254, 0.32) 96%); }
+
+.hud { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: center; z-index: 10; pointer-events: none; }
+.hud-left, .hud-right { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+.hud-pill { background: linear-gradient(135deg, rgba(20, 10, 55, 0.88), rgba(6, 3, 22, 0.95)); backdrop-filter: blur(10px); border: 2.5px solid #00f2fe; border-radius: 99px; padding: 7px 16px; color: #fff; font-family: 'Titan One', cursive; font-size: 19px; display: flex; align-items: center; gap: 8px; box-shadow: 0 6px 0 #033a45, 0 10px 25px rgba(0, 242, 254, 0.4); text-shadow: 0 3px 0 #000; }
+.hud-pill.gold { border-color: #ffd700; box-shadow: 0 6px 0 #664900, 0 10px 25px rgba(255, 215, 0, 0.4); }
+.sound-btn { background: rgba(20, 10, 55, 0.9); border: 2.5px solid #ff0066; color: #fff; width: 42px; height: 42px; border-radius: 50%; font-size: 18px; cursor: pointer; box-shadow: 0 5px 0 #660029; display: flex; justify-content: center; align-items: center; }
+.coin-icon { display: inline-block; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #fff6a9, #ffd700 55%, #ff8c00); border: 2px solid #fff; box-shadow: 0 0 10px #ffd700; vertical-align: middle; }
+
+#rpmHud { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); right: 16px; background: rgba(10, 4, 30, 0.85); border: 2px solid #00f2fe; border-radius: 16px; padding: 6px 12px; color: #fff; font-family: 'Titan One', cursive; font-size: 14px; z-index: 10; display: none; align-items: center; gap: 8px; box-shadow: 0 0 20px rgba(0,242,254,0.4); pointer-events: none; }
+.rpm-bar-bg { width: 70px; height: 10px; background: #1a0f3a; border-radius: 99px; overflow: hidden; border: 1px solid #fff; }
+#rpmBarFill { width: 40%; height: 100%; background: linear-gradient(90deg, #00f2fe, #00ff87, #ff0055); transition: width 0.08s; }
+
+#morphHud { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); background: linear-gradient(90deg, #ff0066, #ffae00); border: 3px solid #fff; padding: 7px 24px; border-radius: 99px; color: #fff; font-family: 'Titan One', cursive; font-size: 17px; display: none; z-index: 10; box-shadow: 0 0 30px #ff0066; animation: pulseGlow 0.35s infinite alternate; white-space: nowrap; }
+@keyframes pulseGlow { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.08); } }
+
+#brainBanner { position: absolute; top: 122px; left: 50%; transform: translateX(-50%); background: linear-gradient(180deg, #7f00ff, #e100ff); border: 4px solid #00ff87; color: #fff; font-family: 'Titan One', cursive; font-size: 28px; padding: 10px 28px; border-radius: 24px; box-shadow: 0 8px 0 #3c0078, 0 15px 40px rgba(0, 255, 135, 0.65); display: none; z-index: 11; text-shadow: 0 3px 0 #000; white-space: nowrap; }
+#comicPopup { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%) scale(0); font-family: 'Titan One', cursive; font-size: 42px; color: #ffea00; text-shadow: 0 5px 0 #ff0055, 0 0 35px #ffea00; pointer-events: none; z-index: 15; transition: transform 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.45); white-space: nowrap; }
+
+#menuOverlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 22px 18px max(22px, env(safe-area-inset-bottom)); z-index: 20; background: linear-gradient(180deg, rgba(5,1,18,0.85) 0%, rgba(5,1,18,0) 25%, rgba(5,1,18,0) 60%, rgba(5,1,18,0.95) 88%); pointer-events: none; }
+#menuOverlay * { pointer-events: auto; }
+.menu-top { text-align: center; margin-top: 44px; }
+.game-logo { font-family: 'Titan One', cursive; font-size: 46px; background: linear-gradient(180deg, #ffffff 0%, #00f2fe 55%, #0088ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 5px 0 #ff0055) drop-shadow(0 10px 25px rgba(0,242,254,0.65)); line-height: 0.95; letter-spacing: 1px; }
+.game-sub { font-size: 14px; font-weight: 900; color: #ffd700; letter-spacing: 1.5px; margin-top: 8px; text-shadow: 0 2px 6px #000; }
+
+.menu-bottom { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 6px; }
+.car-selector { display: flex; align-items: center; justify-content: space-between; width: 100%; background: linear-gradient(180deg, rgba(26, 15, 68, 0.9), rgba(11, 5, 34, 0.95)); backdrop-filter: blur(10px); border: 2.5px solid #00f2fe; border-radius: 24px; padding: 10px 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.7), inset 0 0 15px rgba(0,242,254,0.2); }
+.arrow-btn { background: linear-gradient(180deg, #ff2a75, #d1004b); border: 3px solid #fff; color: #fff; width: 46px; height: 46px; border-radius: 50%; font-family: 'Titan One', cursive; font-size: 20px; cursor: pointer; box-shadow: 0 5px 0 #750029; }
+.arrow-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #750029; }
+.car-info { text-align: center; color: #fff; }
+.car-title { font-family: 'Titan One', cursive; font-size: 22px; color: #fff; letter-spacing: 0.5px; text-shadow: 0 3px 0 #000; }
+.car-morph-tag { font-size: 13px; color: #00ff87; font-weight: 900; margin-top: 2px; }
+
+.btn-play { width: 100%; background: linear-gradient(180deg, #00ff87 0%, #00c964 55%, #009e4f 100%); border: 4px solid #fff; color: #032b15; font-family: 'Titan One', cursive; font-size: 28px; padding: 15px; border-radius: 99px; cursor: pointer; box-shadow: 0 8px 0 #005c2d, 0 15px 35px rgba(0, 255, 135, 0.55); text-shadow: 0 1px 0 rgba(255,255,255,0.6); }
+.btn-play:active { transform: translateY(5px); box-shadow: 0 3px 0 #005c2d; }
+
+.action-row { display: flex; gap: 8px; width: 100%; }
+.btn-sub { flex: 1; background: linear-gradient(180deg, #ffe033, #ff8800); border: 3px solid #fff; color: #2b1400; font-weight: 900; font-size: 13px; padding: 12px 8px; border-radius: 18px; cursor: pointer; box-shadow: 0 5px 0 #914a00; text-align: center; line-height: 1.15; }
+.btn-sub:active { transform: translateY(3px); box-shadow: 0 2px 0 #914a00; }
+.btn-sub.cyan { background: linear-gradient(180deg, #00f2fe, #0072ff); color: #fff; box-shadow: 0 5px 0 #00377a; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }

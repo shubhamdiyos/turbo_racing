@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Turbo Morph 3D</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Nunito:wght@800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/main.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./assets/three/three.module.js",
+    "three/addons/": "./assets/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="gameWrapper">
+  <div id="loaderBadge">⚡ Loading 3D Ferrari & V12 Audio...</div>
+  <div id="speedLines"></div>
+
+  <div class="hud">
+    <div class="hud-left">
+      <div class="hud-pill gold"><span class="coin-icon"></span> <span id="coinVal">500</span></div>
+    </div>
+    <div class="hud-right">
+      <div class="hud-pill">🏁 <span id="scoreVal">0</span>m</div>
+      <button class="sound-btn" id="muteBtn" onclick="window.toggleMute()">🔊</button>
+    </div>
+  </div>
+
+  <div id="rpmHud">
+    <span id="gearTxt" style="color:#ffea00;">G1</span>
+    <div class="rpm-bar-bg"><div id="rpmBarFill"></div></div>
+    <span id="mphTxt">120 KM/H</span>
+  </div>
+
+  <div id="morphHud">🦖 MONSTER MORPH ACTIVE!</div>
+  <div id="brainBanner">⚡ 6 + 6 = ?</div>
+  <div id="comicPopup">MEGA MORPH!</div>
+
+  <div id="menuOverlay">
+    <div class="menu-top">
+      <div class="game-logo" id="menuTitle">TURBO MORPH</div>
+      <div class="game-sub" id="menuSub">HIGH-SPEED 3D SUPERCAR RUNNER</div>
+    </div>
+
+    <div class="menu-bottom">
+      <div class="car-selector">
+        <button class="arrow-btn" onclick="window.cycleCar(-1)">◀</button>
+        <div class="car-info">
+          <div class="car-title" id="carNameTxt">FERRARI 458 CYBER</div>
+          <div class="car-morph-tag" id="carMorphTxt">Morphs into: 🦖 Mecha Rex-Truck</div>
+        </div>
+        <button class="arrow-btn" onclick="window.cycleCar(1)">▶</button>
+      </div>
+
+      <button class="btn-play" id="mainPlayBtn" onclick="window.handleMainBtn()">TAP TO RACE! 🚀</button>
+
+      <div class="action-row">
+        <button class="btn-sub" onclick="window.watchAdStartMorph()">📺 Start Morphed!</button>
+        <button class="btn-sub" id="reviveBtn" style="display:none;" onclick="window.watchAdRevive()">📺 Revive Run!</button>
+        <button class="btn-sub cyan" id="upgradeBtn" onclick="window.upgradeNitro()">⚡ NITRO LV.1<br><span class='coin-icon' style='width:14px;height:14px;vertical-align:middle;'></span> 150</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
