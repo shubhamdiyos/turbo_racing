@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Turbo Morph 3D</title>
-<link rel="icon" href="favicon.ico" sizes="any">
-<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Nunito:wght@800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Chakra+Petch:wght@500;600;700&family=Nunito:wght@800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/main.css">
 <script type="importmap">
 {
@@ -21,9 +20,11 @@
   <div id="loaderBadge">⚡ Loading 3D Ferrari & V12 Audio...</div>
   <div id="speedLines"></div>
 
+  <!-- Top HUD -->
   <div class="hud">
     <div class="hud-left">
       <div class="hud-pill gold"><span class="coin-icon"></span> <span id="coinVal">500</span></div>
+      <div class="hud-pill combo" id="comboPill">🔥 x2</div>
     </div>
     <div class="hud-right">
       <div class="hud-pill">🏁 <span id="scoreVal">0</span>m</div>
@@ -32,47 +33,119 @@
     </div>
   </div>
 
+  <!-- Center-Bottom Cockpit Tachometer -->
   <div id="rpmHud">
-    <span id="gearTxt" style="color:#ffea00;">G1</span>
+    <span class="gear-badge" id="gearTxt">G1</span>
     <div class="rpm-bar-bg"><div id="rpmBarFill"></div></div>
-    <span id="mphTxt">120 KM/H</span>
+    <span id="mphTxt">140 KM/H</span>
   </div>
 
-  <div id="morphHud">🦖 MONSTER MORPH ACTIVE!</div>
+  <!-- Morph Status Banner + Live Depleting Timer Bar -->
+  <div id="morphHud">
+    <div id="morphTitleTxt">🦖 MECHA REX-TRUCK ACTIVE!</div>
+    <div class="morph-bar-track"><div id="morphBarFill"></div></div>
+  </div>
+
   <div id="brainBanner">⚡ 6 + 6 = ?</div>
   <div id="comicPopup">MEGA MORPH!</div>
 
+  <!-- 3D Showroom Garage Overlay -->
   <div id="menuOverlay">
     <div class="menu-top">
       <div class="game-logo" id="menuTitle">TURBO MORPH</div>
-      <div class="game-sub" id="menuSub">HIGH-SPEED 3D SUPERCAR RUNNER</div>
+      <div class="menu-meta">
+        <span class="meta-chip"><i>🏆</i>BEST <b id="bestScoreBadge">0</b>M</span>
+        <span class="meta-chip ghost"><i>↔</i>DRAG TO SPIN</span>
+      </div>
     </div>
 
     <div class="menu-bottom">
-      <div class="car-selector">
-        <button class="arrow-btn" onclick="window.cycleCar(-1)">◀</button>
-        <div class="car-info">
-          <div class="car-title" id="carNameTxt">FERRARI 458 CYBER</div>
-          <div class="car-morph-tag" id="carMorphTxt">Morphs into: 🦖 Mecha Rex-Truck</div>
+      <div class="garage-card">
+        <div class="car-selector-top">
+          <button class="arrow-btn" onclick="window.cycleCar(-1)" aria-label="Previous car"><span>‹</span></button>
+          <div class="car-info">
+            <div class="car-title-row">
+              <span class="car-title" id="carNameTxt">FERRARI 458 CYBER</span>
+              <span class="owned-tag" id="carOwnedTag">OWNED</span>
+            </div>
+            <div class="car-morph-row">
+              <span class="morph-label">MORPH</span>
+              <span class="car-morph-tag" id="carMorphTxt">🦖 Mecha Rex-Truck</span>
+            </div>
+          </div>
+          <button class="arrow-btn" onclick="window.cycleCar(1)" aria-label="Next car"><span>›</span></button>
         </div>
-        <button class="arrow-btn" onclick="window.cycleCar(1)">▶</button>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-head"><span>SPD</span><span id="statSpdVal">85%</span></div>
+            <div class="stat-track"><div class="stat-fill" id="statSpdBar" style="width:85%;"></div></div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-head"><span>MORPH</span><span id="statMorphVal">8.0s</span></div>
+            <div class="stat-track"><div class="stat-fill" id="statMorphBar" style="width:70%;"></div></div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-head"><span>MAG</span><span id="statMagVal">LV.1</span></div>
+            <div class="stat-track"><div class="stat-fill" id="statMagBar" style="width:60%;"></div></div>
+          </div>
+        </div>
       </div>
 
-      <button class="btn-play" id="mainPlayBtn" onclick="window.handleMainBtn()">TAP TO RACE! 🚀</button>
+      <button class="btn-play" id="mainPlayBtn" onclick="window.handleMainBtn()">
+        <span class="btn-label">TAP TO RACE</span><span class="btn-chev">▸</span>
+      </button>
 
       <div class="action-row">
-        <button class="btn-sub" onclick="window.watchAdStartMorph()">📺 Start Morphed!</button>
-        <button class="btn-sub" id="reviveBtn" style="display:none;" onclick="window.watchAdRevive()">📺 Revive Run!</button>
-        <button class="btn-sub cyan" id="upgradeBtn" onclick="window.upgradeNitro()">⚡ NITRO LV.1<br><span class='coin-icon' style='width:14px;height:14px;vertical-align:middle;'></span> 150</button>
+        <button class="btn-sub" id="headstartBtn" onclick="window.useHeadstartMorph()">
+          <span class="sub-ico">🚀</span><span class="sub-txt">HEADSTART</span><span class="cost"><span class="coin-icon mini"></span>100</span>
+        </button>
+        <button class="btn-sub cyan" id="upgradeBtn" onclick="window.upgradeNitro()">
+          <span class="sub-ico">⚡</span><span class="sub-txt">NITRO LV.1</span><span class="cost"><span class="coin-icon mini"></span>150</span>
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Mid-Game PAUSE Modal (Resume, Restart, Settings, Quit to Garage) -->
+  <!-- Dedicated Post-Race Results Modal -->
+  <div class="dialog-backdrop" id="resultsModal">
+    <div class="dialog-card">
+      <div class="dialog-title" id="resTitleTxt">RACE OVER! 💥</div>
+      <div class="new-best-pill" id="newBestBanner">🏆 NEW DISTANCE RECORD!</div>
+
+      <div class="results-grid">
+        <div class="res-box">
+          <span class="res-label">DISTANCE</span>
+          <span class="res-val" id="resDistVal">0m</span>
+        </div>
+        <div class="res-box">
+          <span class="res-label">COINS EARNED</span>
+          <span class="res-val gold" id="resCoinsVal">+0</span>
+        </div>
+        <div class="res-box">
+          <span class="res-label">CARS SMASHED</span>
+          <span class="res-val green" id="resSmashVal">0</span>
+        </div>
+        <div class="res-box">
+          <span class="res-label">NEAR MISSES</span>
+          <span class="res-val" style="color:#00f2fe;" id="resNearVal">0</span>
+        </div>
+      </div>
+
+      <button class="modal-btn gold" id="reviveBtn" onclick="window.useReviveShield()">🛡️ Shield Revive <span class="cost"><span class="coin-icon mini"></span>100</span></button>
+      <button class="modal-btn green" onclick="window.restartRace()">🔄 Play Again</button>
+      <button class="modal-btn blue" onclick="window.closeResultsToGarage()">🏠 Garage Showroom</button>
+    </div>
+  </div>
+
+  <!-- Mid-Game PAUSE Modal -->
   <div class="dialog-backdrop" id="pauseModal">
     <div class="dialog-card">
       <div class="dialog-title">RACE PAUSED</div>
-      <div class="dialog-stats" id="pauseStatsTxt">DISTANCE: 0m  |  RUN COINS: +0</div>
+      <div class="res-box" style="width:100%;">
+        <span class="res-label">CURRENT RUN PROGRESS</span>
+        <span class="res-val gold" id="pauseStatsTxt" style="font-size:17px;">0m &nbsp;|&nbsp; +0 COINS</span>
+      </div>
 
       <button class="modal-btn green" onclick="window.resumeGame()">▶ RESUME RACE</button>
       <button class="modal-btn blue" onclick="window.restartRace()">🔄 RESTART RUN</button>
@@ -81,7 +154,7 @@
     </div>
   </div>
 
-  <!-- Full Arcade SETTINGS Modal (Music, SFX, Voice, Haptics, Steering Mode) -->
+  <!-- Arcade SETTINGS Modal -->
   <div class="dialog-backdrop" id="settingsModal">
     <div class="dialog-card">
       <div class="dialog-title">SETTINGS ⚙️</div>
@@ -106,16 +179,14 @@
         <button class="toggle-pill on" id="toggleHapticsBtn" onclick="window.toggleSetting('haptics')">ON</button>
       </div>
 
-      <div style="text-align:left; font-size:12px; font-weight:900; color:#00f2fe; letter-spacing:1px; margin-top:4px;">
-        🎮 STEERING CONTROLS:
-      </div>
+      <div class="group-label">🎮 Steering Input</div>
       <div class="control-group">
         <button class="ctrl-chip" id="ctrlSwipe" onclick="window.setControlMode('swipe')">👆 SWIPE</button>
         <button class="ctrl-chip" id="ctrlTap" onclick="window.setControlMode('tap')">👈👉 TAP EDGES</button>
         <button class="ctrl-chip active" id="ctrlBoth" onclick="window.setControlMode('both')">⚡ BOTH</button>
       </div>
 
-      <button class="modal-btn green" style="margin-top:6px;" onclick="window.closeSettings()">✓ SAVE &amp; CLOSE</button>
+      <button class="modal-btn green" style="margin-top:4px;" onclick="window.closeSettings()">✓ SAVE &amp; CLOSE</button>
     </div>
   </div>
 </div>
