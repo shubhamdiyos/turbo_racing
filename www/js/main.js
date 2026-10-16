@@ -35,10 +35,10 @@ if (!save.tuning) {
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
 const CAR_SPECS = [
-  { name: "FERRARI 458 CYBER", short: "458 CYBER", tier: "CORE", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "🦖 Mecha Rex-Truck", type: "truck", baseSpd: 78 },
-  { name: "NEON VIPER 458", short: "VIPER 458", tier: "RARE", hex: 0x00e5ff, rimHex: 0xff0066, flameHex: 0xff0066, price: 300, morph: "✈️ Supersonic Stealth Jet", type: "jet", baseSpd: 85 },
-  { name: "EMERALD HYPER 458", short: "HYPER 458", tier: "EPIC", hex: 0x00ff66, rimHex: 0xffea00, flameHex: 0x00ff87, price: 750, morph: "🦖 Neon Crusher Rig", type: "truck", baseSpd: 92 },
-  { name: "ROYAL GOLD 458", short: "GOLD 458", tier: "MYTHIC", hex: 0xffb800, rimHex: 0xffffff, flameHex: 0xffae00, price: 1500, morph: "✈️ Golden Valkyrie Jet", type: "jet", baseSpd: 100 }
+  { name: "FERRARI 458 CYBER", short: "458 CYBER", tier: "CORE", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "Mecha Rex-Truck", type: "truck", baseSpd: 78, basePr: 740 },
+  { name: "NEON VIPER 458", short: "VIPER 458", tier: "RARE", hex: 0x00e5ff, rimHex: 0xff0066, flameHex: 0xff0066, price: 300, morph: "Supersonic Stealth Jet", type: "jet", baseSpd: 85, basePr: 810 },
+  { name: "EMERALD HYPER 458", short: "HYPER 458", tier: "EPIC", hex: 0x00ff66, rimHex: 0xffea00, flameHex: 0x00ff87, price: 750, morph: "Neon Crusher Rig", type: "truck", baseSpd: 92, basePr: 885 },
+  { name: "ROYAL GOLD 458", short: "GOLD 458", tier: "MYTHIC", hex: 0xffb800, rimHex: 0xffffff, flameHex: 0xffae00, price: 1500, morph: "Golden Valkyrie Jet", type: "jet", baseSpd: 100, basePr: 950 }
 ];
 
 // Neon accents are player-chosen per car, so they live in the save, not in CAR_SPECS defaults.
@@ -908,6 +908,55 @@ const carTyreMat = new THREE.MeshPhysicalMaterial({
   color: 0x0a0a10, metalness: 0.0, roughness: 0.88, clearcoat: 0.28, clearcoatRoughness: 0.55, envMapIntensity: 0.7
 });
 
+// --- WHEEL MOTION RIG -------------------------------------------------------
+// A long-exposure photograph of a spinning wheel is concentric rings, so this smear decal is
+// built from a radial gradient alone: any angular detail would strobe rather than blur.
+function createSpinBlurTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  [
+    [0.00, 'rgba(112,124,142,0.22)'],
+    [0.15, 'rgba(208,220,238,0.40)'],
+    [0.28, 'rgba(90,102,120,0.24)'],
+    [0.46, 'rgba(190,204,224,0.30)'],
+    [0.60, 'rgba(80,90,108,0.22)'],
+    [0.71, 'rgba(226,238,252,0.50)'],
+    [0.79, 'rgba(26,30,40,0.58)'],
+    [0.91, 'rgba(11,11,17,0.82)'],
+    [0.98, 'rgba(11,11,17,0.40)'],
+    [1.00, 'rgba(11,11,17,0.00)']
+  ].forEach(([at, col]) => g.addColorStop(at, col));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const spinBlurMat = new THREE.MeshBasicMaterial({
+  map: createSpinBlurTexture(), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide
+});
+spinBlurMat.visible = false;
+const spinBlurGeo = {};
+[1, -1].forEach(side => {
+  const g = new THREE.CircleGeometry(1, 44);
+  g.rotateY(side * Math.PI / 2);
+  spinBlurGeo[side] = g;
+});
+
+// rollR is in world units because the no-slip maths runs against worldStep, while the decal
+// lives in the wheel's own frame, so discR and offX stay in that rig's model units.
+function rigWheel(w, rollR, discR, offX) {
+  w.userData.rollR = rollR;
+  const side = w.position.x >= 0 ? 1 : -1;
+  const disc = new THREE.Mesh(spinBlurGeo[side], spinBlurMat);
+  disc.position.x = side * offX;
+  disc.scale.setScalar(discR);
+  disc.renderOrder = 3;
+  w.add(disc);
+}
+
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('./assets/draco/');
 const gltfLoader = new GLTFLoader();
@@ -928,9 +977,15 @@ gltfLoader.load(
     });
     const glassObj = baseFerrariModel.getObjectByName('glass');
     if (glassObj) glassObj.material = carGlassMat;
+    // wheel_* are groups, so assigning a material to them did nothing; the rubber and the
+    // barrel are the tire / wheel meshes nested inside each one.
     ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr'].forEach(part => {
-      const obj = baseFerrariModel.getObjectByName(part);
-      if (obj) obj.material = carTyreMat;
+      const grp = baseFerrariModel.getObjectByName(part);
+      if (!grp) return;
+      const tyre = grp.getObjectByName('tire');
+      if (tyre) tyre.material = carTyreMat;
+      const barrel = grp.getObjectByName('wheel');
+      if (barrel) barrel.material = carDetailsMat;
     });
 
     playerCarMesh.clear();
@@ -942,6 +997,9 @@ gltfLoader.load(
       myFerrari.getObjectByName('wheel_rr')
     ].filter(Boolean);
     playerCarMesh.add(myFerrari);
+    // Tire radius 0.358 and barrel half-width 0.142 in ferrari.glb units, at the 0.88 scale
+    // the hub sits 0.315 above the road, which is exactly the rolling radius.
+    playerWheels.forEach(w => rigWheel(w, 0.358 * baseFerrariModel.scale.x, 0.38, 0.156));
 
     buildMechaRexTruck();
   },
@@ -1160,6 +1218,9 @@ function buildMechaRexTruck() {
   [[-1.28, -1.92], [1.28, -1.92], [-1.28, 1.96], [1.28, 1.96]].forEach(([wx, wz]) => {
     const w = buildMonsterWheel(0.94, 0.74);
     w.position.set(wx, 0.94, wz);
+    // Hub hardware stands proud of the 0.74 tread, so the decal clears the spokes and the 0.94
+    // ride height is the contact radius. The disc reaches the 1.09 lug tips.
+    rigWheel(w, 0.94, 1.08, 0.55);
     monsterTruckGroup.add(w);
     monsterWheels.push(w);
   });
@@ -1331,11 +1392,11 @@ function spawnReflexGate3D() {
   if (score < 400) {
     a = Math.floor(Math.random() * 7) + 2; b = Math.floor(Math.random() * 6) + 2;
     correct = a + b; wrong = correct + (Math.random() > 0.5 ? 2 : -1);
-    qText = `⚡ ${a} + ${b} = ?`;
+    qText = `${a} + ${b} = ?`;
   } else {
     a = Math.floor(Math.random() * 8) + 2; b = Math.floor(Math.random() * 6) + 2;
     correct = a * b; wrong = correct + (Math.random() > 0.5 ? 3 : -2);
-    qText = `⚡ ${a} × ${b} = ?`;
+    qText = `${a} × ${b} = ?`;
   }
 
   const rightIsLeft = Math.random() > 0.5;
@@ -1475,11 +1536,7 @@ window.quitToGarage = () => {
   cyberJetGroup.visible = false;
 
   isMorphPreview = false;
-  const gpBtn = document.getElementById('morphPreviewBtn');
-  if (gpBtn) {
-    gpBtn.classList.remove('morph-active');
-    gpBtn.innerText = '🦖 PREVIEW MORPH';
-  }
+  setPreviewLabel(false);
   clearStuntProps();
   shiftBiome(0, true);
 
@@ -1561,6 +1618,12 @@ function syncSettingsUI() {
 function tuningLevel(part) {
   return Math.max(1, Math.min(5, save.tuning[part] || 1));
 }
+// Display-only Performance Rating: chassis tier sets the floor, the three upgrade ladders add
+// up to +96, and 999 caps the scale so a fully tuned MYTHIC reads as a ceiling number.
+function carPR(idx) {
+  const earned = (tuningLevel('speed') - 1) + (tuningLevel('morph') - 1) + (tuningLevel('magnet') - 1);
+  return Math.min(999, CAR_SPECS[idx].basePr + earned * 8);
+}
 // Normalised so every level on every car moves the bar — raw baseSpd tops out at 100.
 function speedPct(finalSpd) {
   return Math.round(55 + ((finalSpd - 78) / 46) * 45);
@@ -1595,10 +1658,11 @@ function syncUI() {
   const spec = CAR_SPECS[save.selectedCar];
   const owned = save.unlocked.includes(save.selectedCar);
   document.getElementById('carNameTxt').innerText = spec.name;
-  document.getElementById('carMorphTxt').innerText = `Morphs into: ${spec.morph}`;
+  document.getElementById('carPrBadge').innerText = `PR ${carPR(save.selectedCar)}`;
+  document.getElementById('carMorphTxt').innerText = `MORPH SYSTEM: ${spec.morph.toUpperCase()}`;
 
   const ownedTag = document.getElementById('carOwnedTag');
-  ownedTag.innerText = owned ? '✓ EQUIPPED' : `🔒 ${spec.price}`;
+  ownedTag.innerText = owned ? 'EQUIPPED' : `LOCKED ${spec.price}`;
   ownedTag.className = `owned-tag ${owned ? '' : 'locked'}`;
 
   // 4-car thumbnail dock
@@ -1611,7 +1675,7 @@ function syncUI() {
     thumb.onclick = () => window.selectCar(i);
     thumb.innerHTML = `<span class="thumb-swatch" style="background:#${c.hex.toString(16).padStart(6, '0')};color:#${c.hex.toString(16).padStart(6, '0')};"></span>`
       + `<span class="thumb-name">${c.short}</span>`
-      + `<span class="thumb-tier tier-${c.tier}">${isOwned ? c.tier : '🔒' + c.price}</span>`;
+      + `<span class="thumb-tier tier-${c.tier}">${isOwned ? c.tier : 'LOCK ' + c.price}</span>`;
     carousel.appendChild(thumb);
   });
 
@@ -1722,12 +1786,18 @@ window.switchGarageTab = (tab) => {
   }
 };
 
+// The preview pill owns an inline SVG, so rewriting its innerText would delete the icon.
+function setPreviewLabel(onMorph) {
+  const btn = document.getElementById('morphPreviewBtn');
+  if (!btn) return;
+  btn.classList.toggle('morph-active', onMorph);
+  document.getElementById('morphPreviewTxt').innerText = onMorph ? 'SHOWROOM VIEW' : 'MORPH PREVIEW';
+}
+
 window.toggleMorphPreview = () => {
   sound.init(() => state === 'PLAYING');
   isMorphPreview = !isMorphPreview;
-  const btn = document.getElementById('morphPreviewBtn');
-  btn.classList.toggle('morph-active', isMorphPreview);
-  btn.innerText = isMorphPreview ? '🏎️ NORMAL VIEW' : '🦖 PREVIEW MORPH';
+  setPreviewLabel(isMorphPreview);
 
   const morphType = CAR_SPECS[save.selectedCar].type;
   playerCarMesh.visible = !isMorphPreview;
@@ -1744,8 +1814,7 @@ window.resetShowroomCamera = () => {
   playerCarMesh.visible = true;
   monsterTruckGroup.visible = false;
   cyberJetGroup.visible = false;
-  document.getElementById('morphPreviewBtn').classList.remove('morph-active');
-  document.getElementById('morphPreviewBtn').innerText = '🦖 PREVIEW MORPH';
+  setPreviewLabel(false);
   window.switchGarageTab('showroom');
 };
 
@@ -1848,7 +1917,7 @@ function boostCombo() {
   combo = Math.min(5, combo + 1);
   comboTimer = 260;
   const pill = document.getElementById('comboPill');
-  pill.innerText = `🔥 x${combo}`;
+  document.getElementById('comboVal').innerText = `x${combo}`;
   pill.style.display = 'flex';
   pill.style.transform = 'scale(1.22)';
   setTimeout(() => { pill.style.transform = 'scale(1)'; }, 120);
@@ -1888,11 +1957,7 @@ function startRun(withMorph) {
 
   // Launching a run takes over the morph meshes, so drop any showroom preview state first.
   isMorphPreview = false;
-  const pvBtn = document.getElementById('morphPreviewBtn');
-  if (pvBtn) {
-    pvBtn.classList.remove('morph-active');
-    pvBtn.innerText = '🦖 PREVIEW MORPH';
-  }
+  setPreviewLabel(false);
   clearStuntProps();
 
   if (withMorph) activateMorphState(morphFrames() + 20);
@@ -1940,7 +2005,8 @@ function triggerCrash() {
   save.best = Math.max(save.best, finalDist);
   syncUI();
 
-  document.getElementById('newBestBanner').style.display = isNewRecord ? 'inline-block' : 'none';
+  // flex, not inline-block — the pill is now an svg + label row and needs to keep them aligned.
+  document.getElementById('newBestBanner').style.display = isNewRecord ? 'flex' : 'none';
   document.getElementById('resDistVal').innerText = `${finalDist}m`;
   document.getElementById('resCoinsVal').innerText = `+${runCoins}`;
   document.getElementById('resSmashVal').innerText = smashes;
@@ -1961,7 +2027,8 @@ function spawnEnemyTrafficCar(laneIndex) {
     enemy = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.0, 3.8), new THREE.MeshStandardMaterial({ color: enemyColor }));
   }
   enemy.position.set(LANES[laneIndex], 0, -140);
-  enemy.userData = { nearMissed: false };
+  enemy.userData = { nearMissed: false, wheels: ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr']
+    .map(n => enemy.getObjectByName(n)).filter(Boolean) };
   scene.add(enemy);
   obstacles.push(enemy);
 }
@@ -2153,8 +2220,10 @@ function clearStuntProps() {
 // --- MISSION TRACKER ----------------------------------------------------------
 function updateMissionBanner() {
   const m = MISSIONS[save.missionIdx % MISSIONS.length];
-  document.getElementById('missionTxt').innerText = `${m.desc} (${Math.min(m.target, save.missionProg || 0)}/${m.target})`;
+  const prog = Math.min(m.target, save.missionProg || 0);
+  document.getElementById('missionTxt').innerText = `${m.desc} (${prog}/${m.target})`;
   document.getElementById('missionReward').innerText = m.reward;
+  document.getElementById('missionBarFill').style.width = `${(prog / m.target) * 100}%`;
 }
 
 // Runs mid-race, so it only touches the two nodes it needs — a full syncUI() here would
@@ -2307,6 +2376,10 @@ function animate() {
     podiumGroup.rotation.y = -showroomAngle * 0.5;
     tickSpin.rotation.y += 0.006;
     playerWheels.forEach(w => { w.rotation.x -= 0.02; });
+    // The morph preview shows the truck, so its tyres browse-turn too or the rig looks dead.
+    monsterWheels.forEach(w => { w.rotation.x -= 0.02; });
+    spinBlurMat.visible = false;
+    spinBlurMat.opacity = 0;
     underglow.material.opacity = 0.34 + Math.sin(tick * 0.045) * 0.12;
     // Breathe is added on top of the active bay's framing so the car never sits perfectly still.
     const breathe = Math.sin(tick * 0.011);
@@ -2424,15 +2497,24 @@ function animate() {
 
   document.getElementById('gearTxt').innerText = morphTimer > 0 ? 'MAX' : `G${sound.gear}`;
   document.getElementById('rpmBarFill').style.width = `${Math.floor(sound.rpm * 100)}%`;
-  document.getElementById('mphTxt').innerText = `${Math.floor(140 + (speed - 0.82) * 240 + (morphTimer > 0 ? 85 : 0))} KM/H`;
+  document.getElementById('mphVal').innerText = Math.floor(140 + (speed - 0.82) * 240 + (morphTimer > 0 ? 85 : 0));
 
-  playerWheels.forEach(w => { w.rotation.x -= speed * 0.45; });
-  monsterWheels.forEach(w => { w.rotation.x -= speed * 0.45; });
   emitPlasmaExhaust(morphTimer > 0, false);
 
   // Surface scroll must equal the scenery rate (speed * 1.45 world units/frame) or the tarmac
   // crawls while the city flies past. Local +V runs away from the camera, so the offset grows.
   const worldStep = speed * 1.45;
+  // No-slip rolling: a wheel has to turn through worldStep / radius radians per frame, so the
+  // two rigs can't share one rate — the 0.315 car tyre spins three times faster than the 0.94
+  // truck tyre over the same ground.
+  playerWheels.forEach(w => { w.rotation.x -= worldStep / w.userData.rollR; });
+  monsterWheels.forEach(w => { w.rotation.x -= worldStep / w.userData.rollR; });
+  // Past about half a revolution per frame a spoked wheel strobes instead of spinning, so the
+  // smear decal takes over. Its weight tracks contact-patch speed, shared by both rigs. The
+  // chase cam sits ~84 degrees off the axle, so this reads as a bright lip ring more than a
+  // face veil — which is why the truck's lug pattern needs it far more than the car's.
+  spinBlurMat.opacity = Math.min(0.8, worldStep * 0.45);
+  spinBlurMat.visible = spinBlurMat.opacity > 0.02;
   roadTex.offset.y += worldStep / ROAD_TILE;
   asphalt.rough.offset.y = roadTex.offset.y;
   markTex.offset.y += worldStep / MARK_TILE;
@@ -2586,6 +2668,9 @@ function animate() {
   for (let i = obstacles.length - 1; i >= 0; i--) {
     const o = obstacles[i];
     o.position.z += speed * 1.18;
+    // Traffic is overtaken, not parked: it creeps forward against the tarmac at
+    // (1.45 - 1.18) * speed, so its tyres roll at that rate over the 0.315 radius.
+    o.userData.wheels.forEach(w => { w.rotation.x -= speed * 0.857; });
     const dz = Math.abs(o.position.z - playerRoot.position.z);
     const dx = Math.abs(o.position.x - playerRoot.position.x);
 
