@@ -12,15 +12,22 @@ async function loadAdMobPlugin() {
       console.log('[AdManager] Running in browser — AdMob native plugin skipped');
       return;
     }
-    const { AdMob } = await import('@capacitor-community/admob');
-    admobPlugin = AdMob;
-    await AdMob.initialize({
+    // These web assets are plain ES modules with no bundler pass, so the bare specifier above
+    // cannot resolve inside the WebView even though the plugin is compiled into the app.
+    // Capacitor proxies every registered native plugin onto window.Capacitor.Plugins.
+    if (window.Capacitor.Plugins && window.Capacitor.Plugins.AdMob) {
+      admobPlugin = window.Capacitor.Plugins.AdMob;
+    } else {
+      admobPlugin = (await import('@capacitor-community/admob')).AdMob;
+    }
+    await admobPlugin.initialize({
       requestTrackingAuthorization: true, // iOS ATT prompt
       testingDevices: [],
       initializeForTesting: false,
     });
     console.log('[AdManager] AdMob initialized');
   } catch (e) {
+    admobPlugin = null;
     console.warn('[AdManager] AdMob native plugin not available (browser fallback):', e.message);
   }
 }
