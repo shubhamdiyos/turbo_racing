@@ -8,6 +8,11 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { AAASoundSystem } from './audio.js';
+import { AdManager } from './ads.js';
+import {
+  PRODUCTS, PURCHASES_ARE_SANDBOX, initOffer, offerLive, offerRemaining, countdown,
+  priceOf, isOwned, markPurchased, requestPurchase, usd, LTO_OFF_PCT
+} from './store.js';
 
 let save = JSON.parse(localStorage.getItem('tm3d_arcade_v3')) || {
   coins: 500,
@@ -32,7 +37,31 @@ if (!save.settings) {
 if (!save.tuning) {
   save.tuning = { speed: 1, morph: Math.min(5, save.nitroLevel || 1), magnet: Math.min(5, save.nitroLevel || 1) };
 }
-const todayKey = () => new Date().toISOString().slice(0, 10);
+
+// Daily rewards key to the *local* calendar day. An ISO/UTC day rolls at 05:30 for most of our
+// players, so "today's" reward would appear to be missing for hours after waking up.
+const todayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const daysBetween = (from, to) => Math.round(
+  (new Date(`${to}T00:00:00`) - new Date(`${from}T00:00:00`)) / 86400000
+);
+
+// Streak, trophy chest and the paid-entitlement wallet. None of it is seeded from coins, so
+// nothing a player already bought can be duplicated by the new reward loops.
+if (typeof save.missionsTotal !== 'number') save.missionsTotal = 0;
+if (typeof save.chestsOpened !== 'number') save.chestsOpened = 0;
+if (!save.streak) save.streak = { day: 0, claimedOn: null };
+if (!save.ent) save.ent = { noAds: false, headstarts: 0 };
+delete save.crateDay;   // the once-a-day crate is now the streak claim inside the rewards modal
+initOffer(save);
+
+const persist = () => localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
+// A migration that never writes back leaves the launch offer un-anchored: reload the app before
+// earning anything and the 12-hour clock quietly restarts, making the deal permanent instead of
+// limited. Everything added above is additive, so this commits no loss of earned progress.
+persist();
 
 const CAR_SPECS = [
   { name: "FERRARI 458 CYBER", short: "458 CYBER", tier: "CORE", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "Mecha Rex-Truck", type: "truck", baseSpd: 78, basePr: 740 },
@@ -190,7 +219,10 @@ scene.background = skyTex;
 // Studio IBL reflected a room the player can't see; the sky is the only light source in
 // this world, so wet tarmac and chrome have to pick it up.
 scene.environment = pmremGenerator.fromEquirectangular(skyTex).texture;
-scene.fog = new THREE.Fog(0x3a1140, 36, 214);
+// Fog is only atmosphere, never a sight-line blocker: the near edge sits past the whole
+// reaction band, so traffic is crisp from the moment it can be swerved for. Far stays at 214
+// to hide the end of the ground plane (camera.far is 240).
+scene.fog = new THREE.Fog(0x3a1140, 44, 214);
 
 function createSynthHorizon() {
   const c = document.createElement('canvas');
@@ -435,7 +467,7 @@ const markings = new THREE.Mesh(
   new THREE.PlaneGeometry(11.6, 220),
   new THREE.MeshStandardMaterial({
     map: markTex, transparent: true, roughness: 0.5, metalness: 0.0,
-    emissive: 0xfff3d8, emissiveMap: markTex, emissiveIntensity: 0.42, depthWrite: false
+    emissive: 0xfff3d8, emissiveMap: markTex, emissiveIntensity: 0.58, depthWrite: false
   })
 );
 markings.rotation.x = -Math.PI / 2;
@@ -447,13 +479,27 @@ scene.add(markings);
 // Everything that must recycle with the road registers here.
 const envScenery = [];
 const railMat = new THREE.MeshStandardMaterial({ color: 0x6d7484, metalness: 0.86, roughness: 0.44 });
-const kerbMat = new THREE.MeshStandardMaterial({ color: 0x1b1726, metalness: 0.22, roughness: 0.78 });
+// One mesh still carries both roadside materials, tinted per vertex: the mirror-road reflector
+// redraws every object twice, so splitting shoulder from kerb with a second material would buy
+// legibility at the price of doubling the busiest geometry on screen.
+const kerbMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0.22, roughness: 0.78 });
+const SHOULDER_TINT = new THREE.Color(0x7d7a83);   // pale concrete, against the burnt-out kerb face
+const KERB_TINT = new THREE.Color(0x1b1726);
+function paintTint(g, c) {
+  const n = g.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
 const lampMat = new THREE.MeshStandardMaterial({ color: 0x2a2f3d, metalness: 0.8, roughness: 0.5 });
 const lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: true });
 // A real streetlight sells itself with the pool it throws on the tarmac, not the bulb.
+// Kept narrow and dim: additive pools overlapping down the straight used to merge into one
+// washed band, which read as glare rather than as separate lamps.
 const lampPoolMat = new THREE.MeshBasicMaterial({
   map: createRadialFadeTexture([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.4)'], [1, 'rgba(255,255,255,0)']]),
-  color: 0xffb968, transparent: true, opacity: 0.26, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+  color: 0xffb968, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
 });
 
 // Cross-section, measured outward from the centreline. The carriageway is ±5.8, so every
@@ -467,8 +513,8 @@ function slab(w, h, d, x, y, z = 0) {
 function buildRailSegment(side) {
   const s = side * ROAD_EDGE;
   const stone = [
-    slab(1.3, 0.165, 38, s + 0.65 * side, BED),          // shoulder strip
-    slab(1.2, 0.39, 38, s + 1.8 * side, BED)             // kerb face
+    paintTint(slab(1.3, 0.165, 38, s + 0.65 * side, BED), SHOULDER_TINT),   // shoulder strip
+    paintTint(slab(1.2, 0.39, 38, s + 1.8 * side, BED), KERB_TINT)          // kerb face
   ];
   const k = new THREE.Mesh(mergeGeometries(stone.map(g => g.index ? g.toNonIndexed() : g), false), kerbMat);
   const steel = [slab(0.14, 0.32, 38, s + 2.35 * side, 0.7)];
@@ -485,7 +531,7 @@ function buildStreetlight(side) {
   const pole = new THREE.Mesh(mergeGeometries(parts.map(g => g.index ? g.toNonIndexed() : g), false), lampMat);
   const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.22, 0.55), lampHeadMat);
   head.position.set(s + 0.7 * side, 6.44, 0);
-  const pool = new THREE.Mesh(new THREE.PlaneGeometry(9, 17).rotateX(-Math.PI / 2), lampPoolMat);
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 15).rotateX(-Math.PI / 2), lampPoolMat);
   pool.position.set(s + 0.2 * side, 0.03, 0);
   pool.renderOrder = 3;
   return [pole, head, pool];
@@ -1387,7 +1433,7 @@ function createGateTexture(numStr, borderHex) {
   return new THREE.CanvasTexture(c);
 }
 
-function spawnReflexGate3D() {
+function spawnReflexGate3D(allowed) {
   let a, b, correct, wrong, qText;
   if (score < 400) {
     a = Math.floor(Math.random() * 7) + 2; b = Math.floor(Math.random() * 6) + 2;
@@ -1399,7 +1445,10 @@ function spawnReflexGate3D() {
     qText = `${a} × ${b} = ?`;
   }
 
-  const rightIsLeft = Math.random() > 0.5;
+  // The answer lane is drawn from the lanes the caller already proved traffic-free, so a gate can
+  // never demand a lane change straight into a car. (`correct` above is the arithmetic result.)
+  const answerLane = allowed[Math.floor(Math.random() * allowed.length)];
+  const rightIsLeft = answerLane === 0;
   brainGateGroup = new THREE.Group();
   brainGateGroup.position.z = -135;
 
@@ -1410,12 +1459,19 @@ function spawnReflexGate3D() {
   rightMesh.position.set(LANES[2], 1.9, 0);
 
   brainGateGroup.add(leftMesh, rightMesh);
-  brainGateGroup.userData = { correctLane: rightIsLeft ? 0 : 2 };
+  brainGateGroup.userData = { correctLane: answerLane };
   scene.add(brainGateGroup);
 
   const banner = document.getElementById('brainBanner');
   banner.innerText = qText;
   banner.style.display = 'block';
+}
+
+// The gate asks the player to commit to a lane seconds before it arrives, so the answer lane has
+// to be empty for the whole decision stretch — otherwise the puzzle is a coin flip against a wall.
+function trySpawnReflexGate() {
+  const allowed = [0, 2].filter(l => laneOpen(l, -160, -40, false));
+  if (allowed.length) spawnReflexGate3D(allowed);
 }
 
 function shiftLane(dir) {
@@ -1650,7 +1706,7 @@ function pipBar(el, lvl) {
 }
 
 function syncUI() {
-  localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
+  persist();
   document.getElementById('coinVal').innerText = save.coins;
   document.getElementById('scoreVal').innerText = Math.floor(score);
   document.getElementById('bestScoreBadge').innerText = save.best;
@@ -1714,10 +1770,19 @@ function syncUI() {
   // Live mission tracker
   updateMissionBanner();
 
-  // The crate is a garage affordance — keep it out of the race HUD.
-  const crateOk = save.crateDay !== todayKey() && state === 'MENU';
-  document.getElementById('crateBtn').style.display = crateOk ? 'flex' : 'none';
+  // The crate is a garage affordance — keep it out of the race HUD. It is now the rewards entry
+  // point, so it stays put while either payout is waiting and dims once both are banked.
+  const cratePing = (streakClaimable() || chestsReady() > 0) && state === 'MENU';
+  const crateBtn = document.getElementById('crateBtn');
+  crateBtn.style.display = state === 'MENU' ? 'flex' : 'none';
+  crateBtn.classList.toggle('claimed', !cratePing);
   document.getElementById('headstartBtn').style.display = owned ? 'none' : 'flex';
+
+  // Headstart prices itself out of the token wallet first, coins second.
+  document.getElementById('hsCostTxt').innerHTML = save.ent.headstarts > 0
+    ? `TOKEN · ${save.ent.headstarts} LEFT`
+    : `<span class="coin-icon mini"></span> ${HEADSTART_COST}`;
+  updateHubBadges();
 
   const mainBtn = document.getElementById('mainPlayBtn');
   mainBtn.classList.toggle('locked', !owned);
@@ -1852,26 +1917,21 @@ window.setNeonAccent = (hexColor, btnEl) => {
   syncUI();
 };
 
-window.claimFreeCrate = () => {
-  sound.init(() => state === 'PLAYING');
-  if (save.crateDay === todayKey()) return;
-  save.crateDay = todayKey();
-  save.coins += 150;
-  sound.playMorphPowerup();
-  spawnExplosion3D(playerRoot.position, 0xffd700, 24);
-  showComicPopup("🎁 +150 BONUS COINS!", "#ffd700");
-  syncUI();
-};
-
 window.useHeadstartMorph = () => {
   sound.init(() => state === 'PLAYING');
-  if (save.coins >= 100) {
-    save.coins -= 100;
+  // Tokens are the paid/reward currency and get spent before coins; the old "free if you are
+  // broke" branch handed the morph to anyone who never banked a coin.
+  if (save.ent.headstarts > 0) {
+    save.ent.headstarts--;
+    syncUI();
+    startRun(true);
+  } else if (save.coins >= HEADSTART_COST) {
+    save.coins -= HEADSTART_COST;
     syncUI();
     startRun(true);
   } else {
-    // Free Headstart if under 100 coins so kids can always enjoy the feature!
-    startRun(true);
+    sound.triggerExhaustBackfire();
+    showComicPopup(`NEED ${HEADSTART_COST} COINS OR A TOKEN`, '#ff0055');
   }
 };
 
@@ -1933,6 +1993,8 @@ function startRun(withMorph) {
   document.getElementById('pauseModal').style.display = 'none';
   document.getElementById('settingsModal').style.display = 'none';
   document.getElementById('resultsModal').style.display = 'none';
+  document.getElementById('rewardsModal').style.display = 'none';
+  document.getElementById('shopModal').style.display = 'none';
   document.getElementById('rpmHud').style.display = 'flex';
   document.getElementById('pauseBtn').style.display = 'flex';
   podiumGroup.visible = false;
@@ -1945,6 +2007,8 @@ function startRun(withMorph) {
 
   score = 0; runCoins = 0; smashes = 0; nearMisses = 0; combo = 1; comboTimer = 0;
   nextMilestone = 500;
+  coinDoubled = false;
+  lastRunCoins = 0;
   document.getElementById('comboPill').style.display = 'none';
 
   const spec = CAR_SPECS[save.selectedCar];
@@ -2011,25 +2075,76 @@ function triggerCrash() {
   document.getElementById('resCoinsVal').innerText = `+${runCoins}`;
   document.getElementById('resSmashVal').innerText = smashes;
   document.getElementById('resNearVal').innerText = nearMisses;
+
+  lastRunCoins = runCoins;
+  coinDoubled = false;
+  const dblBtn = document.getElementById('doubleBtn');
+  dblBtn.style.display = runCoins > 0 ? 'flex' : 'none';
+  dblBtn.disabled = false;
+  document.getElementById('doubleTxt').innerText = 'WATCH AD · 2× COINS';
+
+  // A run is only monetised while the no-ads entitlement is missing — buying it has to remove
+  // something the player actually experiences.
+  if (!save.ent.noAds) AdManager.tryShowInterstitial();
+
   document.getElementById('resultsModal').style.display = 'flex';
 }
 
+// Traffic paints are built once and cycled. Per-spawn material allocation used to force a
+// shader recompile on every car that entered the frame.
+const ENEMY_PALETTE = [0x9b59b6, 0xff9100, 0x00e5ff, 0xff0055];
+const ENEMY_BODY_MATS = ENEMY_PALETTE.map(color => new THREE.MeshPhysicalMaterial({
+  color, metalness: 0.8, roughness: 0.18, clearcoat: 1.0
+}));
+const ENEMY_BLOCK_MATS = ENEMY_PALETTE.map(color => new THREE.MeshStandardMaterial({ color }));
+let enemyPaint = 0;
+
+const enemyTailMat = new THREE.MeshBasicMaterial({ color: 0xff2436, toneMapped: false });
+const enemyTailGeo = (() => {
+  const parts = [
+    new THREE.BoxGeometry(0.5, 0.15, 0.07).translate(-0.6, 0, 0),
+    new THREE.BoxGeometry(0.5, 0.15, 0.07).translate(0.6, 0, 0)
+  ].map(g => g.index ? g.toNonIndexed() : g);
+  return mergeGeometries(parts, false);
+})();
+// The rear face and light height come from the rig's real bounds, not a hand-guessed offset,
+// so the strip stays glued to the bodywork if the model is ever rescaled. Keyed by rig source
+// because traffic can start spawning before the GLB arrives, and the stand-in box is a
+// different shape.
+const enemyTailAnchors = {};
+function getEnemyTailAnchor(enemy, key) {
+  if (enemyTailAnchors[key]) return enemyTailAnchors[key];
+  const box = new THREE.Box3().setFromObject(enemy);
+  const h = box.max.y - box.min.y;
+  enemyTailAnchors[key] = {
+    y: (box.min.y + h * 0.44 - enemy.position.y) / enemy.scale.y,
+    z: (box.max.z - enemy.position.z) / enemy.scale.z
+  };
+  return enemyTailAnchors[key];
+}
+
 function spawnEnemyTrafficCar(laneIndex) {
-  const palette = [0x9b59b6, 0xff9100, 0x00e5ff, 0xff0055];
-  const enemyColor = palette[Math.floor(Math.random() * palette.length)];
-  let enemy;
+  const enemy = baseFerrariModel
+    ? baseFerrariModel.clone()
+    : new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.0, 3.8), ENEMY_BLOCK_MATS[enemyPaint % ENEMY_BLOCK_MATS.length]);
   if (baseFerrariModel) {
-    enemy = baseFerrariModel.clone();
-    enemy.getObjectByName('body').material = new THREE.MeshPhysicalMaterial({
-      color: enemyColor, metalness: 0.8, roughness: 0.18, clearcoat: 1.0
-    });
-  } else {
-    enemy = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.0, 3.8), new THREE.MeshStandardMaterial({ color: enemyColor }));
+    const body = enemy.getObjectByName('body');
+    if (body) body.material = ENEMY_BODY_MATS[enemyPaint % ENEMY_BODY_MATS.length];
   }
+  enemyPaint++;
+
+  // Taillights are the one cue that survives fog, bloom and a purple car in front of a purple
+  // city: a hazard marker the player reads as "car ahead" instead of "scenery".
+  scene.add(enemy);
   enemy.position.set(LANES[laneIndex], 0, -140);
+  enemy.updateWorldMatrix(true, false);
+  const a = getEnemyTailAnchor(enemy, baseFerrariModel ? 'rig' : 'block');
+  const tails = new THREE.Mesh(enemyTailGeo, enemyTailMat);
+  tails.position.set(0, a.y, a.z - 0.02);
+  enemy.add(tails);
+
   enemy.userData = { nearMissed: false, wheels: ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr']
     .map(n => enemy.getObjectByName(n)).filter(Boolean) };
-  scene.add(enemy);
   obstacles.push(enemy);
 }
 
@@ -2217,6 +2332,55 @@ function clearStuntProps() {
   monsterTruckGroup.rotation.z = 0;
 }
 
+// --- TRACK OCCUPANCY ----------------------------------------------------------
+// Nothing spawns without first asking the road whether that stretch is free. This reads the live
+// scene arrays rather than a reservation ledger, so a reservation can never outlive the prop it
+// was made for, and nothing has to be un-reserved when an object is removed early.
+const TRAFFIC_HALF_L = 2.6;   // 3.8-long chassis plus margin
+
+const laneOf = (x) => {
+  let best = 0, bd = Infinity;
+  LANES.forEach((lx, i) => { const d = Math.abs(lx - x); if (d < bd) { bd = d; best = i; } });
+  return best;
+};
+const spansBand = (o, halfL, zFrom, zTo) => o.position.z + halfL > zFrom && o.position.z - halfL < zTo;
+const sameLane = (o, lane) => Math.abs(o.position.x - LANES[lane]) < 1.7;
+
+// Lanes that already hold traffic inside this depth band.
+function lanesWalled(zFrom, zTo) {
+  const walled = new Set();
+  obstacles.forEach(o => { if (spansBand(o, TRAFFIC_HALF_L, zFrom, zTo)) walled.add(laneOf(o.position.x)); });
+  return walled;
+}
+
+// props:false tests only for traffic. Ramps, pads and pickups are things you drive *through*,
+// so they need the lane to be reachable, not a lane to themselves.
+function laneOpen(lane, zFrom, zTo, props = true) {
+  if (obstacles.some(o => sameLane(o, lane) && spansBand(o, TRAFFIC_HALF_L, zFrom, zTo))) return false;
+  if (!props) return true;
+  // A gate's portals physically straddle the two outer lanes, so it blocks those and nothing else.
+  if (brainGateGroup && lane !== 1 && spansBand(brainGateGroup, 2.2, zFrom, zTo)) return false;
+  if (ramps.some(r => sameLane(r, lane) && spansBand(r, 2.4, zFrom, zTo))) return false;
+  if (boostPads.some(p => sameLane(p, lane) && spansBand(p, 2.6, zFrom, zTo))) return false;
+  if (magnetPickups.some(m => sameLane(m, lane) && spansBand(m, 1.1, zFrom, zTo))) return false;
+  return true;
+}
+
+// A prop lane: empty through its own approach, so the player can commit to it and get out.
+function pickPropLane(zSpawn, approach) {
+  const open = [0, 1, 2].filter(l => laneOpen(l, zSpawn - approach, zSpawn + 6));
+  return open.length ? open[Math.floor(Math.random() * open.length)] : -1;
+}
+
+// The Always-1-Open-Lane rule: a band may hold at most two cars, and the chosen lane must also be
+// clear of props so nothing stacks nose-to-tail.
+function pickTrafficLane() {
+  const z = -140;
+  if (lanesWalled(z - TRAFFIC_HALF_L * 2, z + TRAFFIC_HALF_L * 2).size >= 2) return -1;
+  const free = [0, 1, 2].filter(l => laneOpen(l, z - 11, z + 11));
+  return free.length ? free[Math.floor(Math.random() * free.length)] : -1;
+}
+
 // --- MISSION TRACKER ----------------------------------------------------------
 function updateMissionBanner() {
   const m = MISSIONS[save.missionIdx % MISSIONS.length];
@@ -2237,14 +2401,261 @@ function advanceMission(type, amount = 1) {
     runCoins += m.reward;
     save.missionIdx = (save.missionIdx + 1) % MISSIONS.length;
     save.missionProg = 0;
-    localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
+    // The chest is driven by a lifetime counter, not by the cycling mission index, so it can
+    // only ever pay once per three real completions.
+    save.missionsTotal++;
+    persist();
     sound.playMorphPowerup();
     spawnExplosion3D(playerRoot.position, 0x00ff87, 26);
     showComicPopup(`🎯 MISSION COMPLETE! +${m.reward} <span class="coin-icon" style="width:24px;height:24px;vertical-align:middle;"></span>`, "#00ff87");
+    updateHubBadges();
   }
   document.getElementById('coinVal').innerText = save.coins;
   updateMissionBanner();
 }
+
+// ─── REWARDS: DAILY STREAK, TROPHY CHEST, HEADSTART TOKENS ──────────────────
+// Everything here pays out of one wallet (save.coins + save.ent.headstarts) and every gate is
+// a persisted counter, so a reward cannot be farmed by quitting, reloading or changing the clock.
+const STREAK_REWARDS = [
+  { coins: 250 }, { coins: 400 }, { coins: 600, tokens: 1 }, { coins: 800 },
+  { coins: 1100 }, { coins: 1500, tokens: 1 }, { coins: 2500, tokens: 2 }
+];
+const CHEST_EVERY = 3;
+const CHEST_REWARD = { coins: 1200, tokens: 2 };
+const HEADSTART_COST = 100;
+
+const streakClaimable = () => save.streak.claimedOn !== todayKey();
+const chestsReady = () => Math.floor(save.missionsTotal / CHEST_EVERY) - save.chestsOpened;
+// A gap of exactly one calendar day extends the run; anything longer — clock changes included —
+// restarts it at day 1, which is the only rule that makes a streak mean something.
+function nextStreakDay() {
+  if (!save.streak.claimedOn || !save.streak.day) return 1;
+  return daysBetween(save.streak.claimedOn, todayKey()) === 1 ? (save.streak.day % 7) + 1 : 1;
+}
+
+// Garage-side payout: it moves the wallet but never runCoins, which is race telemetry only.
+function grantWallet(coins, tokens = 0) {
+  save.coins += coins;
+  save.ent.headstarts += tokens;
+  persist();
+  document.getElementById('coinVal').innerText = save.coins;
+}
+
+window.claimStreak = () => {
+  if (!streakClaimable()) return;
+  const day = nextStreakDay();
+  const r = STREAK_REWARDS[day - 1];
+  save.streak.day = day;
+  save.streak.claimedOn = todayKey();
+  grantWallet(r.coins, r.tokens || 0);
+  sound.playMorphPowerup();
+  spawnExplosion3D(playerRoot.position, 0xffd700, 28);
+  showComicPopup(`📅 DAY ${day} · +${r.coins}${r.tokens ? ` · +${r.tokens} TOKENS` : ''}`, '#ffd700');
+  renderRewards();
+  updateHubBadges();
+};
+
+window.claimChest = () => {
+  if (chestsReady() <= 0) {
+    sound.triggerExhaustBackfire();
+    showComicPopup('COMPLETE 3 MORE MISSIONS', '#ff9100');
+    return;
+  }
+  save.chestsOpened++;
+  grantWallet(CHEST_REWARD.coins, CHEST_REWARD.tokens);
+  sound.playMorphPowerup();
+  spawnExplosion3D(playerRoot.position, 0x00ff87, 32);
+  showComicPopup(`🏆 CHEST! +${CHEST_REWARD.coins} · +${CHEST_REWARD.tokens} TOKENS`, '#00ff87');
+  renderRewards();
+  updateHubBadges();
+};
+
+function renderRewards() {
+  const claimable = streakClaimable();
+  const hotDay = claimable ? nextStreakDay() : save.streak.day;
+  const grid = document.getElementById('streakGrid');
+  grid.innerHTML = '';
+  STREAK_REWARDS.forEach((r, i) => {
+    const d = i + 1;
+    const cell = document.createElement('div');
+    const done = d < hotDay || (d === hotDay && !claimable);
+    cell.className = 'streak-cell'
+      + (d === hotDay ? ' today' : '')
+      + (done ? ' claimed' : '')
+      + (d === 7 ? ' jackpot' : '');
+    cell.innerHTML = `<span class="streak-day">DAY ${d}</span>`
+      + `<span class="streak-val"><span class="coin-icon mini"></span>${r.coins}`
+      + (r.tokens ? `<small>+${r.tokens}T</small>` : '') + `</span>`;
+    grid.appendChild(cell);
+  });
+
+  const btn = document.getElementById('claimStreakBtn');
+  if (claimable) {
+    const d = nextStreakDay();
+    btn.innerText = `CLAIM DAY ${d} · +${STREAK_REWARDS[d - 1].coins}`;
+    btn.disabled = false;
+  } else {
+    btn.innerText = 'CLAIMED · RETURN TOMORROW';
+    btn.disabled = true;
+  }
+  document.getElementById('streakSub').innerText = save.streak.day > 1
+    ? `${save.streak.day}-DAY RUN · SKIP A DAY AND IT RESETS TO DAY 1`
+    : 'ONE CLAIM PER DAY · SKIP A DAY AND THE RUN RESETS';
+
+  const ready = chestsReady() > 0;
+  const intoNext = save.missionsTotal % CHEST_EVERY;
+  document.getElementById('chestProg').innerText = ready ? `×${chestsReady()}` : `${intoNext}/${CHEST_EVERY}`;
+  document.getElementById('chestBarFill').style.width = `${(intoNext / CHEST_EVERY) * 100}%`;
+  document.getElementById('chestRow').classList.toggle('ready', ready);
+  document.getElementById('chestTag').innerText = ready ? 'OPEN NOW' : 'LOCKED';
+  document.getElementById('tokenCount').innerText = save.ent.headstarts;
+  const adsTag = document.getElementById('noAdsTag');
+  adsTag.innerText = save.ent.noAds ? 'ACTIVE' : 'NO';
+  adsTag.className = save.ent.noAds ? 'yes' : '';
+}
+
+// ─── SANDBOX STORE + 12-HOUR LAUNCH OFFER ───────────────────────────────────
+function applyGrants(g) {
+  const lines = [];
+  if (g.coins) { save.coins += g.coins; lines.push(`+${g.coins} COINS`); }
+  if (g.headstarts) { save.ent.headstarts += g.headstarts; lines.push(`${g.headstarts} HEADSTART TOKENS`); }
+  if (g.noAds && !save.ent.noAds) { save.ent.noAds = true; lines.push('ADS REMOVED'); }
+  const add = (idx) => {
+    const spec = CAR_SPECS[idx];
+    // Append to the garage instead of selecting: a purchase should never hijack what the
+    // player is standing on the turntable looking at.
+    if (spec && !save.unlocked.includes(idx)) { save.unlocked.push(idx); lines.push(`${spec.name} UNLOCKED`); }
+  };
+  if (g.unlockAllCars) CAR_SPECS.forEach((_, i) => add(i));
+  (g.unlockCars || []).forEach(add);
+  return lines;
+}
+
+function renderShop() {
+  const live = offerLive(save);
+  document.getElementById('ltoBanner').classList.toggle('dead', !live);
+  document.getElementById('ltoClock').innerText = countdown(offerRemaining(save));
+
+  const list = document.getElementById('shopList');
+  list.innerHTML = '';
+  PRODUCTS.forEach(p => {
+    const price = priceOf(save, p);
+    const owned = isOwned(save, p);
+    const row = document.createElement('div');
+    row.className = `shop-row${owned ? ' owned' : ''}`;
+
+    const body = document.createElement('div');
+    body.className = 'shop-body';
+    body.innerHTML = `<span class="shop-title">${p.title}</span>`
+      + `<span class="shop-blurb">${p.blurb}</span>`
+      + (price.off ? `<span class="price-was">${usd(price.list)}</span>` : '');
+
+    const btn = document.createElement('button');
+    btn.className = 'buy-btn';
+    if (owned) {
+      btn.innerText = 'OWNED';
+      btn.disabled = true;
+    } else {
+      btn.innerHTML = `${usd(price.pay)}<b>${PURCHASES_ARE_SANDBOX ? 'SANDBOX' : 'BUY'}</b>`;
+      btn.onclick = () => window.buyProduct(p.id);
+    }
+    row.append(body, btn);
+    list.appendChild(row);
+  });
+
+  document.getElementById('sandboxNote').innerText = PURCHASES_ARE_SANDBOX
+    ? 'Sandbox build: no billing SDK is installed, so nothing is charged and these USD figures are placeholders. Live prices come from Play Billing / App Store per country.'
+    : 'Prices are your store catalogue values for your country.';
+}
+
+window.buyProduct = async (id) => {
+  const p = PRODUCTS.find(x => x.id === id);
+  if (!p || isOwned(save, p)) return;
+  if (!(await requestPurchase(save, p))) {
+    sound.triggerExhaustBackfire();
+    return;
+  }
+  markPurchased(save, p);
+  const lines = applyGrants(p.grants);
+  persist();
+  sound.playMorphPowerup();
+  spawnExplosion3D(playerRoot.position, 0xffea00, 30);
+  showComicPopup(lines.length ? lines[0] : 'PURCHASE COMPLETE', '#00ff87');
+  renderShop();
+  renderRewards();
+  syncUI();
+};
+
+function updateHubBadges() {
+  const ping = streakClaimable() || chestsReady() > 0;
+  document.getElementById('rewardsDot').style.display = ping ? 'block' : 'none';
+  const crate = document.getElementById('crateBtn');
+  if (crate) crate.classList.toggle('claimed', !ping);
+  const tag = document.getElementById('shopOfferTag');
+  const live = offerLive(save);
+  tag.classList.toggle('gone', !live);
+  if (live) tag.innerText = `−70% ${countdown(offerRemaining(save))}`;
+}
+
+window.openRewards = () => {
+  sound.init(() => state === 'PLAYING');
+  sound.playCoinChime(3);
+  renderRewards();
+  document.getElementById('rewardsModal').style.display = 'flex';
+};
+window.closeRewards = () => {
+  document.getElementById('rewardsModal').style.display = 'none';
+  syncUI();
+};
+window.openShop = () => {
+  sound.init(() => state === 'PLAYING');
+  sound.playCoinChime(5);
+  renderShop();
+  document.getElementById('shopModal').style.display = 'flex';
+};
+window.closeShop = () => {
+  document.getElementById('shopModal').style.display = 'none';
+};
+
+// The offer window is a one-off event: expiresAt is persisted and never rolled forward, so this
+// ticker only has to watch for the moment it flips off and repaint the price list once.
+let offerWasLive = offerLive(save);
+setInterval(() => {
+  if (document.getElementById('shopModal').style.display === 'flex') {
+    document.getElementById('ltoClock').innerText = countdown(offerRemaining(save));
+  }
+  const live = offerLive(save);
+  if (live !== offerWasLive) {
+    offerWasLive = live;
+    renderShop();
+  }
+  updateHubBadges();
+}, 1000);
+
+// ─── POST-RACE 2× COIN DOUBLER (real rewarded-ad gate) ──────────────────────
+let coinDoubled = false;
+let lastRunCoins = 0;
+
+window.doubleRunCoins = () => {
+  const btn = document.getElementById('doubleBtn');
+  if (coinDoubled || lastRunCoins <= 0) return;
+  btn.disabled = true;
+  AdManager.showRewardedAd('2× RACE COINS', () => {
+    coinDoubled = true;
+    save.coins += lastRunCoins;
+    runCoins += lastRunCoins;
+    persist();
+    document.getElementById('coinVal').innerText = save.coins;
+    document.getElementById('resCoinsVal').innerText = `+${runCoins}`;
+    document.getElementById('doubleTxt').innerText = 'DOUBLE BANKED';
+    sound.playCoinChime(7);
+    spawnExplosion3D(playerRoot.position, 0xffd700, 26);
+  }).then(() => {
+    // A declined or failed ad must leave the offer standing, not grey it out.
+    if (!coinDoubled) btn.disabled = false;
+  });
+};
 
 function animate() {
   requestAnimationFrame(animate);
@@ -2442,11 +2853,17 @@ function animate() {
     monsterTruckGroup.rotation.z = 0;
   }
 
-  // Stunt ramps and nitro pads, staggered so they never land on top of a reflex gate
+  // Stunt ramps and nitro pads, staggered so they never land on top of a reflex gate. Each one
+  // only drops into a lane that is empty for its whole approach — a refused slot is simply lost
+  // until the next cycle, which is cheaper than a prop the player cannot reach or read.
   if (tick % 190 === 95 && (!brainGateGroup || brainGateGroup.position.z > -60)) {
-    spawnStuntRamp3D(Math.floor(Math.random() * 3));
+    const rLane = pickPropLane(-150, 34);
+    if (rLane >= 0) spawnStuntRamp3D(rLane);
   }
-  if (tick % 190 === 8) spawnBoostPad3D(Math.floor(Math.random() * 3));
+  if (tick % 190 === 8) {
+    const pLane = pickPropLane(-150, 18);
+    if (pLane >= 0) spawnBoostPad3D(pLane);
+  }
 
   // Shared materials, so every kicker on screen breathes as one set piece.
   const rampPulse = 0.78 + Math.sin(tick * 0.16) * 0.22;
@@ -2571,21 +2988,28 @@ function animate() {
   }
 
   if (tick % 32 === 0) {
-    // Weaving runs make you steer for the payout; straight runs reward holding a line
+    // Weaving runs make you steer for the payout; straight runs reward holding a line. A line
+    // only lands where no traffic is standing, otherwise the coins hide inside a car.
     const weave = Math.random() < 0.4;
-    const cLane = weave ? Math.floor(Math.random() * 2) : Math.floor(Math.random() * 3);
-    for (let i = 0; i < 4; i++) {
-      const c = new THREE.Mesh(coinGeo, coinMat);
-      c.position.set(LANES[cLane + (weave && i % 2 ? 1 : 0)], 0.95, -120 - i * 4.8);
-      scene.add(c);
-      coins.push(c);
+    const shapes = weave ? [[0, 1], [1, 2]] : [[0, 0], [1, 1], [2, 2]];
+    const usable = shapes.filter(([a, b]) =>
+      laneOpen(a, -138, -114, false) && laneOpen(b, -138, -114, false));
+    if (usable.length) {
+      const [a, b] = usable[Math.floor(Math.random() * usable.length)];
+      for (let i = 0; i < 4; i++) {
+        const c = new THREE.Mesh(coinGeo, coinMat);
+        c.position.set(LANES[i % 2 ? b : a], 0.95, -120 - i * 4.8);
+        scene.add(c);
+        coins.push(c);
+      }
     }
   }
 
   if (tick % 340 === 160 && !brainGateGroup) {
-    spawnReflexGate3D();
+    trySpawnReflexGate();
   } else if (tick % 48 === 0 && (!brainGateGroup || brainGateGroup.position.z > -75)) {
-    spawnEnemyTrafficCar(Math.floor(Math.random() * 3));
+    const tLane = pickTrafficLane();
+    if (tLane >= 0) spawnEnemyTrafficCar(tLane);
   }
 
   // Gold rings only fly to the car while a magnet (or a morph) is running - otherwise you have
@@ -2615,8 +3039,11 @@ function animate() {
   // active or while a morph is vacuuming, otherwise the two overlap and coins look automatic.
   if (nextMagnetIn > 0) nextMagnetIn--;
   else if (magnetPickups.length === 0 && magnetTimer === 0 && morphTimer === 0) {
-    spawnMagnetPickup(Math.floor(Math.random() * 3));
-    nextMagnetIn = 780 + Math.floor(Math.random() * 300);
+    const mLane = pickPropLane(-112, 22);
+    if (mLane >= 0) {
+      spawnMagnetPickup(mLane);
+      nextMagnetIn = 780 + Math.floor(Math.random() * 300);
+    }
   }
   for (let i = magnetPickups.length - 1; i >= 0; i--) {
     const m = magnetPickups[i];
@@ -2735,7 +3162,11 @@ document.addEventListener('visibilitychange', () => {
 
 if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
   window.Capacitor.Plugins.App.addListener('backButton', () => {
-    if (document.getElementById('settingsModal').style.display === 'flex') {
+    if (document.getElementById('shopModal').style.display === 'flex') {
+      window.closeShop();
+    } else if (document.getElementById('rewardsModal').style.display === 'flex') {
+      window.closeRewards();
+    } else if (document.getElementById('settingsModal').style.display === 'flex') {
       window.closeSettings();
     } else if (state === 'PLAYING') {
       window.pauseGame();
@@ -2751,4 +3182,6 @@ if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
 
 syncUI();
 syncSettingsUI();
+renderRewards();
+AdManager.init();
 animate();
