@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
@@ -53,8 +52,6 @@ function showComicPopup(text, color = '#ffea00') {
 // --- THREE.JS SCENE SETUP ---
 const wrapper = document.getElementById('gameWrapper');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x060218);
-scene.fog = new THREE.FogExp2(0x060218, 0.009);
 
 const camera = new THREE.PerspectiveCamera(58, wrapper.clientWidth / wrapper.clientHeight, 0.1, 240);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -65,7 +62,9 @@ renderer.toneMappingExposure = 1.1;
 wrapper.appendChild(renderer.domElement);
 
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
-scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+// Ground and tarmac run away from the camera at a brutal angle. Capping anisotropy below the
+// device maximum makes those surfaces snap between mip levels in visible horizontal bands.
+const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -116,6 +115,43 @@ rimMagenta.position.set(8.5, 5, -6.5);
 scene.add(keySpot, rimCyan, rimMagenta);
 let showroomFactor = 1;
 
+// ─── ATMOSPHERE ───────────────────────────────────────────────────────────
+// Equirect gradient instead of a sky mesh: it renders at infinity, so the 240-unit
+// camera far plane can never clip it.
+function createSkyTexture() {
+  const W = 16, H = 256;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0.00, '#04030e');
+  g.addColorStop(0.24, '#0a0622');
+  g.addColorStop(0.38, '#1f0a3c');
+  g.addColorStop(0.455, '#5d1250');
+  g.addColorStop(0.492, '#ff7a2f');
+  g.addColorStop(0.508, '#7a1c3f');
+  g.addColorStop(0.56, '#170b24');
+  g.addColorStop(0.78, '#0a0616');
+  g.addColorStop(1.00, '#05030c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const img = ctx.getImageData(0, 0, W, H);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 6;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const skyTex = createSkyTexture();
+scene.background = skyTex;
+// Studio IBL reflected a room the player can't see; the sky is the only light source in
+// this world, so wet tarmac and chrome have to pick it up.
+scene.environment = pmremGenerator.fromEquirectangular(skyTex).texture;
+scene.fog = new THREE.Fog(0x3a1140, 36, 214);
+
 function createSynthHorizon() {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 512;
@@ -134,50 +170,398 @@ function createSynthHorizon() {
   );
   sun.position.set(0, 25, -185);
   scene.add(sun);
+  // Soft bloom feeder along the horizon line so the city bases don't sit on a hard seam
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(420, 54),
+    new THREE.MeshBasicMaterial({ color: 0xff5a2a, transparent: true, opacity: 0.17, fog: false, depthWrite: false })
+  );
+  glow.position.set(0, 7, -188);
+  scene.add(glow);
 }
 createSynthHorizon();
 
-// Mirror-Wet Highway
+// ─── GROUND ───────────────────────────────────────────────────────────────
+// Without this the towers floated over the flat background colour.
+function createGroundTexture() {
+  const S = 1024;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0a0714'; ctx.fillRect(0, 0, S, S);
+  // Broad tonal blotches: packed dirt drifts in patches. Drawn nine times so a blotch that
+  // straddles the tile wraps — a sliced blotch leaves a hard seam line every repeat.
+  for (let i = 0; i < 46; i++) {
+    const x = Math.random() * S, y = Math.random() * S, r = 90 + Math.random() * 240;
+    const lite = Math.random() > 0.55;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        const X = x + ox * S, Y = y + oy * S;
+        const g = ctx.createRadialGradient(X, Y, 0, X, Y, r);
+        g.addColorStop(0, lite ? 'rgba(48,38,74,0.20)' : 'rgba(3,2,9,0.26)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X, Y, r, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+  for (let i = 0; i < 26000; i++) {
+    const lite = Math.random() > 0.5;
+    ctx.fillStyle = `rgba(${lite ? '58,46,88' : '3,2,8'},${0.04 + Math.random() * 0.12})`;
+    ctx.fillRect(Math.random() * S, Math.random() * S, 1 + Math.random() * 2.5, 1 + Math.random() * 2.5);
+  }
+  makeSeamless(ctx, S, 12);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(22, 22);
+  tex.anisotropy = MAX_ANISO;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const groundTex = createGroundTexture();
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(620, 620).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ map: groundTex, color: 0x1a1226, roughness: 0.86, metalness: 0.14 })
+);
+ground.position.y = -0.07;
+scene.add(ground);
+
+// ─── MIRROR-WET HIGHWAY ───────────────────────────────────────────────────
 const LANES = [-3.2, 0, 3.2];
+const ROAD_TILE = 11.6;      // world units per asphalt tile (square, so grit stays isotropic)
+const MARK_TILE = 9.5;       // one dash + gap cycle
 const mirrorRoad = new Reflector(new THREE.PlaneGeometry(11.6, 220), {
   clipBias: 0.003,
   textureWidth: wrapper.clientWidth * 0.6,
   textureHeight: wrapper.clientHeight * 0.6,
-  color: 0x251a4a
+  color: 0x2c2350
 });
 mirrorRoad.rotation.x = -Math.PI / 2;
 mirrorRoad.position.set(0, -0.02, -90);
 scene.add(mirrorRoad);
 
-function createAsphaltOverlayTexture() {
-  const c = document.createElement('canvas');
-  c.width = 512; c.height = 512;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = 'rgba(10, 7, 26, 0.8)';
-  ctx.fillRect(0, 0, 512, 512);
-  ctx.strokeStyle = 'rgba(0, 242, 254, 0.14)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i <= 512; i += 64) {
-    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(0, 242, 254, 0.62)'; ctx.fillRect(8, 0, 10, 512);
-  ctx.fillStyle = 'rgba(255, 0, 102, 0.62)'; ctx.fillRect(494, 0, 10, 512);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-  ctx.fillRect(168, 60, 10, 220);
-  ctx.fillRect(334, 60, 10, 220);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(1, 28);
-  return tex;
+// Painted lane layout in u: carriageway is 11.6 wide, so u = 0.5 + x / 11.6
+const uAt = x => 0.5 + x / 11.6;
+
+// Canvas draws clip at the border, so every tile would end with a hard, untextured seam that
+// mipmapping smears into a visible grid along the road. Copy the opposite edge over instead.
+function makeSeamless(ctx, S, b) {
+  const tmp = document.createElement('canvas');
+  tmp.width = tmp.height = S;
+  const t = tmp.getContext('2d');
+  t.drawImage(ctx.canvas, 0, 0);
+  ctx.drawImage(tmp, 0, 0, S, b, 0, S - b, S, b);
+  ctx.drawImage(tmp, 0, S - b, S, b, 0, 0, S, b);
+  ctx.drawImage(tmp, 0, 0, b, S, S - b, 0, b, S);
+  ctx.drawImage(tmp, S - b, 0, b, S, 0, 0, b, S);
 }
-const roadTex = createAsphaltOverlayTexture();
+
+function createAsphaltTextures() {
+  const S = 1024;
+  const col = document.createElement('canvas');
+  col.width = col.height = S;
+  const cx = col.getContext('2d');
+  const rgh = document.createElement('canvas');
+  rgh.width = rgh.height = S;
+  const rx = rgh.getContext('2d');
+
+  cx.fillStyle = '#15111f'; cx.fillRect(0, 0, S, S);
+  rx.fillStyle = '#a8a8a8'; rx.fillRect(0, 0, S, S);   // matte tar by default
+
+  // Aggregate: dense mineral speckle, both bright chippings and voids
+  for (let i = 0; i < 30000; i++) {
+    const x = Math.random() * S, y = Math.random() * S, r = 0.6 + Math.random() * 2.4;
+    const v = Math.random();
+    cx.fillStyle = v > 0.82 ? `rgba(150,146,168,${0.05 + Math.random() * 0.14})`
+      : v > 0.5 ? `rgba(58,52,74,${0.08 + Math.random() * 0.18})`
+        : `rgba(3,2,8,${0.1 + Math.random() * 0.22})`;
+    cx.beginPath(); cx.arc(x, y, r, 0, Math.PI * 2); cx.fill();
+    rx.fillStyle = v > 0.5 ? `rgba(210,210,210,${0.05 + Math.random() * 0.1})` : `rgba(70,70,70,${0.06 + Math.random() * 0.12})`;
+    rx.beginPath(); rx.arc(x, y, r, 0, Math.PI * 2); rx.fill();
+  }
+
+  // Tar patch repairs and res seams — darker, smoother, so they read wetter. Drawn nine times
+  // so a patch that straddles the tile wraps instead of being sliced off.
+  for (let p = 0; p < 7; p++) {
+    const px = Math.random() * S, py = Math.random() * S, pw = 90 + Math.random() * 260, ph = 70 + Math.random() * 200;
+    const rot = Math.random() * Math.PI, a = 0.3 + Math.random() * 0.25;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        const X = px + ox * S, Y = py + oy * S;
+        cx.fillStyle = `rgba(8,6,14,${a})`;
+        cx.beginPath(); cx.ellipse(X, Y, pw / 2, ph / 2, rot, 0, Math.PI * 2); cx.fill();
+        rx.fillStyle = 'rgba(150,150,150,0.5)';
+        rx.beginPath(); rx.ellipse(X, Y, pw / 2, ph / 2, rot, 0, Math.PI * 2); rx.fill();
+      }
+    }
+  }
+
+  // Polished wheel tracks: tyre rubber burns the binder off, leaving a glossier lane under
+  // each wheel line — the lane centres, not the paint, which is where nothing ever drives.
+  const trackPx = LANES.map(l => uAt(l) * S);
+  trackPx.forEach(tx => {
+    const w = 78;
+    const lg = cx.createLinearGradient(tx - w, 0, tx + w, 0);
+    lg.addColorStop(0, 'rgba(30,26,40,0)');
+    lg.addColorStop(0.5, 'rgba(38,33,50,0.42)');
+    lg.addColorStop(1, 'rgba(30,26,40,0)');
+    cx.fillStyle = lg; cx.fillRect(tx - w, 0, w * 2, S);
+    const rg = rx.createLinearGradient(tx - w, 0, tx + w, 0);
+    rg.addColorStop(0, 'rgba(60,60,60,0)');
+    rg.addColorStop(0.5, 'rgba(46,46,46,0.85)');
+    rg.addColorStop(1, 'rgba(60,60,60,0)');
+    rx.fillStyle = rg; rx.fillRect(tx - w, 0, w * 2, S);
+  });
+
+  // Alligator cracking near the shoulders
+  cx.strokeStyle = 'rgba(4,3,9,0.62)';
+  for (let k = 0; k < 26; k++) {
+    const sx = Math.random() * S, sy = Math.random() * S;
+    const pts = [[sx, sy]];
+    for (let s = 0; s < 7; s++) pts.push([pts[s][0] + (Math.random() - 0.5) * 60, pts[s][1] + (Math.random() - 0.5) * 60]);
+    cx.lineWidth = 1 + Math.random() * 1.6;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        cx.beginPath();
+        pts.forEach(([x, y], i) => (i ? cx.lineTo(x + ox * S, y + oy * S) : cx.moveTo(x + ox * S, y + oy * S)));
+        cx.stroke();
+      }
+    }
+  }
+
+  makeSeamless(cx, S, 10);
+  makeSeamless(rx, S, 10);
+
+  const mk = (canvas, srgb) => {
+    const t = new THREE.CanvasTexture(canvas);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1, 220 / ROAD_TILE);
+    t.anisotropy = MAX_ANISO;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  return { color: mk(col, true), rough: mk(rgh, false) };
+}
+const asphalt = createAsphaltTextures();
+const roadTex = asphalt.color;
 const roadOverlay = new THREE.Mesh(
   new THREE.PlaneGeometry(11.6, 220),
-  new THREE.MeshStandardMaterial({ map: roadTex, transparent: true, roughness: 0.42, metalness: 0.34 })
+  new THREE.MeshStandardMaterial({
+    map: asphalt.color, roughnessMap: asphalt.rough, roughness: 1, metalness: 0.28,
+    transparent: true, opacity: 0.9
+  })
 );
 roadOverlay.rotation.x = -Math.PI / 2;
 roadOverlay.position.set(0, 0.01, -90);
+roadOverlay.renderOrder = 1;
 scene.add(roadOverlay);
+
+// Markings ride their own plane so the paint stays crisp and can glow independently
+function createMarkingTexture() {
+  const W = 512, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const dash = (x, w, y0, y1) => {
+    // faded, chipped paint: build the stroke from grains so edges are never vector-clean
+    for (let y = y0; y < y1; y += 2) {
+      for (let dx = -w / 2; dx < w / 2; dx += 2) {
+        const a = 0.5 + Math.random() * 0.5;
+        ctx.fillStyle = `rgba(238,240,255,${a})`;
+        ctx.fillRect(x + dx + (Math.random() - 0.5), y, 2, 2);
+      }
+    }
+  };
+  // lane dividers, one dash per tile
+  [-1.6, 1.6].forEach(lx => dash(uAt(lx) * W, 11, 40, 250));
+  // edge lines run continuously — dashing them reads as a string of white blobs up close
+  [uAt(-5.35), uAt(5.35)].forEach(ex => dash(ex * W, 9, 0, H));
+  // cat's-eye reflectors at each dash head
+  [-1.6, 1.6].forEach(lx => {
+    ctx.fillStyle = 'rgba(255,252,235,0.95)';
+    ctx.beginPath(); ctx.arc(uAt(lx) * W, 34, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(uAt(lx) * W, 286, 6, 0, Math.PI * 2); ctx.fill();
+  });
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1, 220 / MARK_TILE);
+  tex.anisotropy = MAX_ANISO;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const markTex = createMarkingTexture();
+const markings = new THREE.Mesh(
+  new THREE.PlaneGeometry(11.6, 220),
+  new THREE.MeshStandardMaterial({
+    map: markTex, transparent: true, roughness: 0.5, metalness: 0.0,
+    emissive: 0xfff3d8, emissiveMap: markTex, emissiveIntensity: 0.42, depthWrite: false
+  })
+);
+markings.rotation.x = -Math.PI / 2;
+markings.position.set(0, 0.022, -90);
+markings.renderOrder = 2;
+scene.add(markings);
+
+// ─── SHOULDER, KERB, GUARDRAIL & LIGHTING ─────────────────────────────────
+// Everything that must recycle with the road registers here.
+const envScenery = [];
+const railMat = new THREE.MeshStandardMaterial({ color: 0x6d7484, metalness: 0.86, roughness: 0.44 });
+const kerbMat = new THREE.MeshStandardMaterial({ color: 0x1b1726, metalness: 0.22, roughness: 0.78 });
+const lampMat = new THREE.MeshStandardMaterial({ color: 0x2a2f3d, metalness: 0.8, roughness: 0.5 });
+const lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: true });
+// A real streetlight sells itself with the pool it throws on the tarmac, not the bulb.
+const lampPoolMat = new THREE.MeshBasicMaterial({
+  map: createRadialFadeTexture([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.4)'], [1, 'rgba(255,255,255,0)']]),
+  color: 0xffb968, transparent: true, opacity: 0.26, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+});
+
+// Cross-section, measured outward from the centreline. The carriageway is ±5.8, so every
+// offset starts past that — anything overlapping it would poke through the road plane.
+const ROAD_EDGE = 5.8;
+const BED = -0.09;                       // buried footing so no slab floats over the ground plane
+function slab(w, h, d, x, y, z = 0) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  return g.translate(x, y + h / 2, z);
+}
+function buildRailSegment(side) {
+  const s = side * ROAD_EDGE;
+  const stone = [
+    slab(1.3, 0.165, 38, s + 0.65 * side, BED),          // shoulder strip
+    slab(1.2, 0.39, 38, s + 1.8 * side, BED)             // kerb face
+  ];
+  const k = new THREE.Mesh(mergeGeometries(stone.map(g => g.index ? g.toNonIndexed() : g), false), kerbMat);
+  const steel = [slab(0.14, 0.32, 38, s + 2.35 * side, 0.7)];
+  for (let p = -1; p <= 1; p++) steel.push(slab(0.17, 0.95, 0.17, s + 2.35 * side, BED, p * 12.6));
+  const r = new THREE.Mesh(mergeGeometries(steel.map(g => g.index ? g.toNonIndexed() : g), false), railMat);
+  return [k, r];
+}
+function buildStreetlight(side) {
+  const s = side * ROAD_EDGE;
+  const parts = [
+    slab(0.19, 6.7, 0.19, s + 3.1 * side, BED),          // mast
+    slab(2.6, 0.16, 0.16, s + 1.9 * side, 6.5)           // inward-reaching arm
+  ];
+  const pole = new THREE.Mesh(mergeGeometries(parts.map(g => g.index ? g.toNonIndexed() : g), false), lampMat);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.22, 0.55), lampHeadMat);
+  head.position.set(s + 0.7 * side, 6.44, 0);
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(9, 17).rotateX(-Math.PI / 2), lampPoolMat);
+  pool.position.set(s + 0.2 * side, 0.03, 0);
+  pool.renderOrder = 3;
+  return [pole, head, pool];
+}
+for (let z = 5; z > -185; z -= 38) {
+  [-1, 1].forEach(side => {
+    buildRailSegment(side).forEach(m => { m.position.z = z; scene.add(m); envScenery.push(m); });
+    buildStreetlight(side).forEach(m => { m.position.z = z - 19; scene.add(m); envScenery.push(m); });
+  });
+}
+
+// ─── LAYERED CITY ─────────────────────────────────────────────────────────
+function createBuildingTexture(hueHex, density) {
+  const W = 256, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#070314'; ctx.fillRect(0, 0, W, H);
+  // floor slabs give the tower vertical rhythm instead of a flat window grid
+  ctx.fillStyle = 'rgba(20,12,38,0.9)';
+  for (let y = 0; y < H; y += 28) ctx.fillRect(0, y, W, 4);
+  for (let y = 16; y < 490; y += 28) {
+    for (let x = 16; x < 240; x += 28) {
+      if (Math.random() > density) continue;
+      const warm = Math.random();
+      ctx.fillStyle = warm > 0.86 ? '#ffffff' : warm > 0.62 ? hueHex : `rgba(255,214,150,0.85)`;
+      ctx.globalAlpha = 0.45 + Math.random() * 0.55;
+      ctx.fillRect(x, y, 16, 17);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // lit ground floor / storefront band
+  const sg = ctx.createLinearGradient(0, H - 34, 0, H);
+  sg.addColorStop(0, 'rgba(255,190,110,0)');
+  sg.addColorStop(1, 'rgba(255,196,120,0.75)');
+  ctx.fillStyle = sg; ctx.fillRect(0, H - 34, W, 34);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const bTex = [
+  createBuildingTexture('#00f2fe', 0.3),
+  createBuildingTexture('#ff0066', 0.38),
+  createBuildingTexture('#ffea00', 0.44)
+];
+// Shared materials: the old loop built one per tower, so nothing batched
+const bMats = bTex.map((t, i) => new THREE.MeshStandardMaterial({
+  color: 0x140b2c, map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.62, roughness: 0.44, metalness: 0.18
+}));
+const bFarMat = new THREE.MeshStandardMaterial({ color: 0x0d0a1e, roughness: 0.7, metalness: 0.1, emissive: 0x140828, emissiveIntensity: 0.5 });
+
+// One merged mesh per tower: the mirror-road reflector redraws the whole scene every frame,
+// so a separate rooftop-prop mesh would cost two extra draw calls on the cheapest detail there is.
+// Facade tiles cover a fixed patch of world, so a 70-unit tower doesn't get 70-unit windows.
+const FACADE_U = 21.6;   // 9 window columns at ~2.4 m each
+const FACADE_V = 61.2;   // 18 floor slabs at ~3.4 m each
+function facadeBox(w, h, d) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    const face = (i / 4) | 0;
+    if (face === 2 || face === 3) continue;             // roof stays untiled
+    const span = (face === 0 || face === 1) ? d : w;
+    uv.setXY(i, uv.getX(i) * (span / FACADE_U), uv.getY(i) * (h / FACADE_V));
+  }
+  g.translate(0, h / 2, 0);
+  return g;
+}
+function addTower(x, z, w, d, h, mat) {
+  const parts = [facadeBox(w, h, d)];
+  if (h > 20 && Math.random() > 0.35) {
+    const cw = w * 0.62, ch = h * 0.22, cd = d * 0.62;
+    const crown = facadeBox(cw, ch, cd);
+    crown.translate(0, h, 0);
+    parts.push(crown);
+  }
+  if (h > 16 && Math.random() > 0.4) {
+    parts.push(new THREE.BoxGeometry(1.1, 1.6, 1.1)
+      .translate((Math.random() - 0.5) * w * 0.4, h + 0.8, (Math.random() - 0.5) * d * 0.4));
+  }
+  const tower = new THREE.Mesh(mergeGeometries(parts.map(g => g.index ? g.toNonIndexed() : g), false), mat);
+  tower.position.set(x, 0, z);
+  scene.add(tower);
+  envScenery.push(tower);
+}
+
+// Three depth bands with gaps between them. Packed tight the city reads as a wall and swallows
+// the sky; leaving slots empty and pushing the fronts back is what gives the street its depth.
+for (let z = 5, k = 0; z > -185; z -= 19, k++) {
+  if (k % 5 === 2) continue;                       // a deliberate hole in the skyline
+  [-19, 19].forEach(bx => {
+    const side = Math.sign(bx);
+    const tall = Math.random() < 0.16;
+    addTower(
+      bx + side * Math.random() * 7, z - Math.random() * 6,
+      8 + Math.random() * 5, 8 + Math.random() * 5,
+      tall ? 42 + Math.random() * 18 : 12 + Math.random() * 19,
+      bMats[Math.floor(Math.random() * bMats.length)]
+    );
+  });
+}
+for (let z = -2; z > -185; z -= 26) {
+  [-36, 36].forEach(bx => {
+    const side = Math.sign(bx);
+    addTower(bx + side * Math.random() * 10, z, 12 + Math.random() * 8, 12 + Math.random() * 8,
+      28 + Math.random() * 34, bFarMat);
+  });
+}
+// unlit silhouettes pinned to the horizon to stop the skyline reading as a row of boxes
+[-72, 72].forEach(bx => {
+  const band = new THREE.Mesh(new THREE.BoxGeometry(20, 22, 200), bFarMat);
+  band.position.set(bx, 11, -100);
+  scene.add(band);
+});
+
 
 // Showroom Turntable Platform
 function createRadialFadeTexture(stops) {
@@ -224,41 +608,6 @@ tickRing.position.y = 0.012;
 tickSpin.add(tickRing);
 podiumGroup.add(baseDisc, neonRing, outerRing, tickSpin);
 scene.add(podiumGroup);
-
-// Procedural City Skyscrapers
-function createBuildingTexture(hueHex) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 512;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#070314'; ctx.fillRect(0, 0, 256, 512);
-  for (let y = 16; y < 490; y += 28) {
-    for (let x = 16; x < 240; x += 28) {
-      if (Math.random() > 0.35) {
-        ctx.fillStyle = Math.random() > 0.2 ? hueHex : '#ffffff';
-        ctx.fillRect(x, y, 16, 18);
-      }
-    }
-  }
-  return new THREE.CanvasTexture(c);
-}
-const bTex1 = createBuildingTexture('#00f2fe');
-const bTex2 = createBuildingTexture('#ff0066');
-const bTex3 = createBuildingTexture('#ffea00');
-const envScenery = [];
-
-for (let z = 5; z > -185; z -= 13) {
-  [-11.8, 11.8].forEach(bx => {
-    const h = 15 + Math.random() * 26;
-    const t = [bTex1, bTex2, bTex3][Math.floor(Math.random() * 3)];
-    const bMat = new THREE.MeshStandardMaterial({
-      color: 0x11092a, map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.8, roughness: 0.3
-    });
-    const bldg = new THREE.Mesh(new THREE.BoxGeometry(5.5, h, 5.5), bMat);
-    bldg.position.set(bx + (Math.random() - 0.5) * 2, h / 2, z);
-    scene.add(bldg);
-    envScenery.push(bldg);
-  });
-}
 
 // --- TWIN-TURBO AFTERBURNER, SHIELD DOME & PLASMA EXHAUST SYSTEM ---
 function createSoftGlowSpriteTexture() {
@@ -1590,7 +1939,13 @@ function animate() {
   monsterWheels.forEach(w => { w.rotation.x -= speed * 0.45; });
   emitPlasmaExhaust(morphTimer > 0, false);
 
-  roadTex.offset.y -= speed * 0.048;
+  // Surface scroll must equal the scenery rate (speed * 1.45 world units/frame) or the tarmac
+  // crawls while the city flies past. Local +V runs away from the camera, so the offset grows.
+  const worldStep = speed * 1.45;
+  roadTex.offset.y += worldStep / ROAD_TILE;
+  asphalt.rough.offset.y = roadTex.offset.y;
+  markTex.offset.y += worldStep / MARK_TILE;
+  groundTex.offset.y += worldStep / (620 / groundTex.repeat.x);
 
   const targetFOV = morphTimer > 0 ? 75 : 58;
   camera.fov += (targetFOV - camera.fov) * 0.1;
