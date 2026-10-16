@@ -42,18 +42,36 @@ const CAR_SPECS = [
 ];
 
 // Neon accents are player-chosen per car, so they live in the save, not in CAR_SPECS defaults.
-if (save.neonAccents) {
-  CAR_SPECS.forEach((c, i) => {
-    if (typeof save.neonAccents[i] === 'number') { c.rimHex = c.flameHex = save.neonAccents[i]; }
-  });
-}
+if (!save.customNeon) save.customNeon = save.neonAccents || {};
+delete save.neonAccents;
+Object.keys(save.customNeon).forEach(carIdx => {
+  const hex = save.customNeon[carIdx];
+  if (CAR_SPECS[carIdx] && typeof hex === 'number') {
+    CAR_SPECS[carIdx].rimHex = hex;
+    CAR_SPECS[carIdx].flameHex = hex;
+  }
+});
 
-const MORPH_MS = [520, 580, 640, 700, 760];   // frames per MORPH CORE level
+const MISSIONS = [
+  { id: 0, type: 'smash', target: 3, desc: 'SMASH 3 TRAFFIC CARS', reward: 250 },
+  { id: 1, type: 'nearmiss', target: 4, desc: 'GET 4 NEAR MISSES', reward: 250 },
+  { id: 2, type: 'dist', target: 800, desc: 'REACH 800m IN ONE RUN', reward: 300 },
+  { id: 3, type: 'stunt', target: 2, desc: 'HIT 2 STUNT RAMPS', reward: 250 }
+];
+if (typeof save.missionIdx !== 'number') save.missionIdx = 0;
+if (typeof save.missionProg !== 'number') save.missionProg = 0;
 
 let garageTab = 'showroom'; // 'showroom' | 'tuning' | 'neon'
 let isMorphPreview = false;
 let showroomCamTarget = new THREE.Vector3(0, 2.15, 6.5);
 let showroomLookTarget = new THREE.Vector3(0, 0.55, 0);
+let currentLookAt = new THREE.Vector3(0, 0.25, 0);
+const _camScratch = new THREE.Vector3();
+const _lookScratch = new THREE.Vector3();
+let barrelRollAngle = 0;
+let nitroPadBoost = 0;
+let ramps = [];
+let boostPads = [];
 
 let state = 'MENU'; // 'MENU' | 'PLAYING' | 'PAUSED' | 'RESULTS'
 const sound = new AAASoundSystem();
@@ -94,12 +112,12 @@ composer.addPass(bloomPass);
 
 // Final lens grade: vignette, film grain and edge chromatic fringe
 const GradeShader = {
-  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, strength: { value: 1 } },
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, strength: { value: 1 }, tint: { value: new THREE.Color(1, 1, 1) } },
   vertexShader: `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float time; uniform float strength;
+    uniform sampler2D tDiffuse; uniform float time; uniform float strength; uniform vec3 tint;
     varying vec2 vUv;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
     vec3 aces(vec3 x) { return clamp(((x * (x * 2.51 + 0.03)) / (x * (x * 2.43 + 0.59) + 0.14)), vec3(0.0), vec3(1.0)); }
@@ -115,6 +133,7 @@ const GradeShader = {
       // anything over 1.0 used to clip flat white. This rolloff is what keeps hot exhaust readable.
       col = aces(col * 1.1);
       col *= mix(1.0, 0.58, smoothstep(0.06, 0.42, r2) * strength);
+      col *= tint;
       col += (hash(vUv * 1024.0 + fract(time) * 97.0) - 0.5) * 0.028 * strength;
       gl_FragColor = vec4(col, 1.0);
     }`
@@ -695,15 +714,18 @@ shieldDome.position.y = 0.85;
 shieldDome.visible = false;
 playerRoot.add(shieldDome);
 
-const exhaustLight = new THREE.PointLight(0x00f2fe, 1.4, 7.5);
-exhaustLight.position.set(0, 0.32, 3.3);
+// The plume glow has to stay off the paint: this light sits aft of the bumper, and at close range
+// a physical point light easily blows out the clearcoat into a white blob that bloom then smears.
+// So it is dim, short-ranged and parked low over the tarmac it is meant to light.
+const exhaustLight = new THREE.PointLight(0x00f2fe, 0.6, 6.5);
+exhaustLight.position.set(0, 0.18, 4);
 playerRoot.add(exhaustLight);
 
 const afterburnerNozzles = new THREE.Group();
 const shockCones = [];
 [-0.44, 0.44].forEach(nx => {
   const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.11, 0.03, 12, 24),
+    new THREE.TorusGeometry(0.095, 0.022, 12, 24),
     new THREE.MeshBasicMaterial({ color: 0x00f2fe })
   );
   ring.position.set(nx, 0.38, 2.15);
@@ -725,7 +747,18 @@ const shockCones = [];
   };
   const halo = mkShell(0.15, 1.05, 0x00f2fe, 0.3, true);
   const core = mkShell(0.075, 0.6, 0xffd9a0, 0.95, false);
-  shockCones.push({ halo, core, ring });
+
+  // A cone viewed down its own axis can only ever paint a bright rim, which is what left the mouth
+  // reading as an empty hoop. The hot core is a camera-facing billboard parked in the outlet.
+  const heart = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowSpriteTex, color: 0xffd9a0, transparent: true, opacity: 0.42,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+  }));
+  heart.position.set(nx, 0.38, 2.2);
+  heart.scale.set(0.17, 0.17, 0.17);
+  afterburnerNozzles.add(heart);
+
+  shockCones.push({ halo, core, ring, heart });
 });
 playerRoot.add(afterburnerNozzles);
 
@@ -756,21 +789,23 @@ playerRoot.add(underglow);
 const exhaustPlumes = [];
 function emitPlasmaExhaust(isMorphed, isShifting) {
   const jetMorph = isMorphed && CAR_SPECS[save.selectedCar].type === 'jet';
-  // The shells do the flame now - these embers only smear it. Additive sprites stack along the
-  // view axis, so every state emits sparingly and stays small.
+  // The shells do the flame now - these embers only smear it. They are additive AND parked between
+  // the camera and the rear bodywork, so overlapping sprites used to sum past white and bloom turned
+  // that into a blob burnt onto the paint. Low peak alpha, small sprites, short life.
   if (isMorphed && tick % (jetMorph ? 3 : 2) !== 0) return;
   if (!isMorphed && tick % 2 !== 0) return;
   const baseOffsets = jetMorph ? [-0.24, 0.24] : (isMorphed ? [-0.64, 0.64] : [-0.44, 0.44]);
   const baseY = jetMorph ? JET_Y + 0.02 : (isMorphed ? 0.85 : 0.38);
   const backZ = jetMorph ? 3.35 : (isMorphed ? 3.25 : 2.25);
-  const initScale = isMorphed ? (jetMorph ? 0.15 : 0.24) : (isShifting ? 0.34 : 0.3);
+  const initScale = isMorphed ? (jetMorph ? 0.15 : 0.17) : (isShifting ? 0.19 : 0.16);
+  const peakAlpha = isMorphed ? 0.12 : 0.1;
 
   baseOffsets.forEach(ox => {
     const mat = new THREE.SpriteMaterial({
       map: glowSpriteTex,
       color: 0x00f2fe,
       transparent: true,
-      opacity: isMorphed ? 0.18 : 0.3,
+      opacity: peakAlpha,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
@@ -782,11 +817,13 @@ function emitPlasmaExhaust(isMorphed, isShifting) {
 
     exhaustPlumes.push({
       sprite,
+      s0: initScale,
+      a0: peakAlpha,
       vx: (Math.random() - 0.5) * 0.03,
-      vy: (Math.random() - 0.5) * 0.02 + 0.01,
-      vz: (isMorphed ? 0.5 : 0.3) + Math.random() * 0.12,
+      vy: (Math.random() - 0.5) * 0.02 + 0.008,
+      vz: (isMorphed ? 0.5 : 0.34) + Math.random() * 0.12,
       life: 1.0,
-      decay: isMorphed ? 0.16 : 0.115,
+      decay: isMorphed ? 0.2 : 0.19,
       isMorphed
     });
   });
@@ -794,22 +831,27 @@ function emitPlasmaExhaust(isMorphed, isShifting) {
 
 function emitTireDriftSparks(dir) {
   const wheelX = dir > 0 ? -0.9 : 0.9;
-  for (let i = 0; i < 14; i++) {
+  // Same additive-over-paint trap as the exhaust embers: these launch from the rear arch and climb
+  // past the deck lid, so they stay small, dim and few.
+  for (let i = 0; i < 9; i++) {
     const mat = new THREE.SpriteMaterial({
       map: glowSpriteTex,
       color: i % 2 === 0 ? 0xffea00 : 0xff5500,
       transparent: true,
+      opacity: 0.12,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
     const sp = new THREE.Sprite(mat);
-    sp.position.set(playerRoot.position.x + wheelX, playerRoot.position.y + 0.15, playerRoot.position.z + 1.4);
-    sp.scale.setScalar(0.32);
+    sp.position.set(playerRoot.position.x + wheelX, playerRoot.position.y + 0.12, playerRoot.position.z + 1.85);
+    sp.scale.setScalar(0.17);
     scene.add(sp);
     exhaustPlumes.push({
       sprite: sp,
+      s0: 0.17,
+      a0: 0.12,
       vx: -dir * (0.08 + Math.random() * 0.12),
-      vy: 0.04 + Math.random() * 0.08,
+      vy: 0.02 + Math.random() * 0.05,
       vz: 0.25 + Math.random() * 0.15,
       life: 0.85,
       isSpark: true
@@ -1432,6 +1474,15 @@ window.quitToGarage = () => {
   monsterTruckGroup.visible = false;
   cyberJetGroup.visible = false;
 
+  isMorphPreview = false;
+  const gpBtn = document.getElementById('morphPreviewBtn');
+  if (gpBtn) {
+    gpBtn.classList.remove('morph-active');
+    gpBtn.innerText = '🦖 PREVIEW MORPH';
+  }
+  clearStuntProps();
+  shiftBiome(0, true);
+
   if (brainGateGroup) { scene.remove(brainGateGroup); brainGateGroup = null; }
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
   coins.forEach(c => scene.remove(c)); coins = [];
@@ -1596,6 +1647,9 @@ function syncUI() {
     el.classList.toggle('active', parseInt(el.dataset.hex, 16) === spec.rimHex);
   });
 
+  // Live mission tracker
+  updateMissionBanner();
+
   // The crate is a garage affordance — keep it out of the race HUD.
   const crateOk = save.crateDay !== todayKey() && state === 'MENU';
   document.getElementById('crateBtn').style.display = crateOk ? 'flex' : 'none';
@@ -1720,8 +1774,7 @@ window.setNeonAccent = (hexColor, btnEl) => {
   sound.init(() => state === 'PLAYING');
   const spec = CAR_SPECS[save.selectedCar];
   spec.rimHex = spec.flameHex = hexColor;
-  save.neonAccents = save.neonAccents || {};
-  save.neonAccents[save.selectedCar] = hexColor;
+  save.customNeon[save.selectedCar] = hexColor;
   neonRing.material.color.setHex(hexColor);
   updatePlayerPaint();
   sound.playCoinChime(5);
@@ -1836,8 +1889,11 @@ function startRun(withMorph) {
   // Launching a run takes over the morph meshes, so drop any showroom preview state first.
   isMorphPreview = false;
   const pvBtn = document.getElementById('morphPreviewBtn');
-  pvBtn.classList.remove('morph-active');
-  pvBtn.innerText = '🦖 PREVIEW MORPH';
+  if (pvBtn) {
+    pvBtn.classList.remove('morph-active');
+    pvBtn.innerText = '🦖 PREVIEW MORPH';
+  }
+  clearStuntProps();
 
   if (withMorph) activateMorphState(morphFrames() + 20);
   else {
@@ -1950,6 +2006,177 @@ function clearMagnetState() {
   document.getElementById('magnetPill').style.display = 'none';
 }
 
+// --- BIOME SHIFTS -------------------------------------------------------------
+// scene.background is an equirect CanvasTexture, so it has no .lerp() — the palette shift is
+// carried by fog, the streetlight bulbs and a colour-grade tint on the final pass instead.
+const BIOMES = [
+  { name: "NEON CYBER-CITY", sky: 0x060218, fog: 0x3a1140, tint: [0.88, 0.94, 1.12], lamp: 0xffd9a0 },
+  { name: "SOLAR OVERDRIVE", sky: 0x1f0510, fog: 0x4a1a20, tint: [1.14, 0.96, 0.78], lamp: 0xffe8b0 },
+  { name: "EMERALD MATRIX", sky: 0x021810, fog: 0x14402f, tint: [0.86, 1.10, 0.92], lamp: 0xd9ffe6 },
+  { name: "HYPER ZERO-G", sky: 0x030b26, fog: 0x241f5a, tint: [0.96, 0.88, 1.16], lamp: 0xcfd8ff }
+];
+let biomeIdx = 0;
+const targetFogColor = new THREE.Color(BIOMES[0].fog);
+const targetTint = new THREE.Color(BIOMES[0].tint[0], BIOMES[0].tint[1], BIOMES[0].tint[2]);
+const targetLampColor = new THREE.Color(BIOMES[0].lamp);
+
+function shiftBiome(idx, silent = false) {
+  const next = ((idx % BIOMES.length) + BIOMES.length) % BIOMES.length;
+  if (next === biomeIdx) return;
+  biomeIdx = next;
+  const b = BIOMES[biomeIdx];
+  targetFogColor.setHex(b.fog);
+  targetTint.setRGB(b.tint[0], b.tint[1], b.tint[2]);
+  targetLampColor.setHex(b.lamp);
+  if (silent) return;
+  showComicPopup(`🌎 ${b.name}!`, "#00f2fe");
+  sound.playMorphPowerup();
+}
+
+// --- STUNT RAMPS + NITRO PADS -------------------------------------------------
+const RAMP_TILT = 0.28;
+const rampBodyGeo = new THREE.BoxGeometry(2.5, 0.35, 3.6);
+const rampFaceGeo = new THREE.PlaneGeometry(2.42, 3.5);
+const rampRailGeo = new THREE.BoxGeometry(0.1, 0.1, 3.62);
+const rampLipGeo = new THREE.BoxGeometry(2.62, 0.1, 0.2);
+const rampApronGeo = new THREE.PlaneGeometry(3.4, 3.4).rotateX(-Math.PI / 2);
+const rampBodyMat = new THREE.MeshStandardMaterial({ color: 0x0b0716, emissive: 0x092334, roughness: 0.5, metalness: 0.35 });
+const rampRailMat = new THREE.MeshBasicMaterial({ color: 0xff2e7e });
+const rampLipMat = new THREE.MeshBasicMaterial({ color: 0xbdf8ff });
+const RAMP_LIP_BASE = rampLipMat.color.clone();
+const RAMP_RAIL_BASE = rampRailMat.color.clone();
+
+// Chevrons drawn up the launch face: v=1 of this map is the far edge of the kicker, so the apexes
+// point the way the car is about to go.
+function makeRampTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 256;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, 128, 256);
+  x.fillStyle = 'rgba(189,248,255,0.5)';
+  x.fillRect(5, 0, 5, 256); x.fillRect(118, 0, 5, 256);
+  x.lineCap = 'round'; x.lineJoin = 'round';
+  for (let i = 0; i < 4; i++) {
+    const y = 46 + i * 56;
+    x.strokeStyle = 'rgba(0,242,254,0.8)'; x.lineWidth = 22;
+    x.beginPath(); x.moveTo(22, y + 30); x.lineTo(64, y); x.lineTo(106, y + 30); x.stroke();
+    x.strokeStyle = 'rgba(255,255,255,0.95)'; x.lineWidth = 7;
+    x.beginPath(); x.moveTo(22, y + 30); x.lineTo(64, y); x.lineTo(106, y + 30); x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const rampFaceMat = new THREE.MeshBasicMaterial({
+  map: makeRampTexture(), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+});
+const rampApronMat = new THREE.MeshBasicMaterial({
+  map: createRadialFadeTexture([[0, 'rgba(0,242,254,0.62)'], [0.45, 'rgba(0,242,254,0.22)'], [1, 'rgba(0,0,0,0)']]),
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+});
+
+function makePadTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 256;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, 128, 256);
+  x.strokeStyle = 'rgba(255,255,255,1)';
+  x.lineWidth = 18;
+  x.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const y = 58 + i * 68;
+    x.beginPath(); x.moveTo(18, y + 34); x.lineTo(64, y); x.lineTo(110, y + 34); x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const padGeo = new THREE.PlaneGeometry(2.4, 4.6).rotateX(-Math.PI / 2);
+const padMat = new THREE.MeshBasicMaterial({
+  map: makePadTexture(), color: 0xffea00, transparent: true, opacity: 0.9,
+  blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+});
+
+function spawnStuntRamp3D(laneIndex) {
+  const g = new THREE.Group();
+
+  const body = new THREE.Mesh(rampBodyGeo, rampBodyMat);
+  body.rotation.x = RAMP_TILT;
+  body.position.y = 0.35;
+  g.add(body);
+
+  const face = new THREE.Mesh(rampFaceGeo, rampFaceMat);
+  face.rotation.x = -Math.PI / 2 + RAMP_TILT;
+  face.position.set(0, 0.528, 0.05);
+  face.renderOrder = 3;
+  g.add(face);
+
+  [-1.24, 1.24].forEach(rx => {
+    const rail = new THREE.Mesh(rampRailGeo, rampRailMat);
+    rail.rotation.x = RAMP_TILT;
+    rail.position.set(rx, 0.52, 0.05);
+    g.add(rail);
+  });
+
+  const lip = new THREE.Mesh(rampLipGeo, rampLipMat);
+  lip.rotation.x = RAMP_TILT;
+  lip.position.set(0, 1.02, -1.66);
+  g.add(lip);
+
+  const apron = new THREE.Mesh(rampApronGeo, rampApronMat);
+  apron.position.set(0, 0.02, 2.1);
+  apron.renderOrder = 2;
+  g.add(apron);
+
+  g.position.set(LANES[laneIndex], 0, -150);
+  scene.add(g);
+  ramps.push(g);
+}
+
+function spawnBoostPad3D(laneIndex) {
+  const pad = new THREE.Mesh(padGeo, padMat);
+  pad.position.set(LANES[laneIndex], 0.035, -150);
+  pad.renderOrder = 2;
+  scene.add(pad);
+  boostPads.push(pad);
+}
+
+function clearStuntProps() {
+  ramps.forEach(r => scene.remove(r)); ramps = [];
+  boostPads.forEach(p => scene.remove(p)); boostPads = [];
+  barrelRollAngle = 0;
+  nitroPadBoost = 0;
+  playerCarMesh.rotation.z = 0;
+  monsterTruckGroup.rotation.z = 0;
+}
+
+// --- MISSION TRACKER ----------------------------------------------------------
+function updateMissionBanner() {
+  const m = MISSIONS[save.missionIdx % MISSIONS.length];
+  document.getElementById('missionTxt').innerText = `${m.desc} (${Math.min(m.target, save.missionProg || 0)}/${m.target})`;
+  document.getElementById('missionReward').innerText = m.reward;
+}
+
+// Runs mid-race, so it only touches the two nodes it needs — a full syncUI() here would
+// rebuild the car carousel and pip bars on every smash.
+function advanceMission(type, amount = 1) {
+  const m = MISSIONS[save.missionIdx % MISSIONS.length];
+  if (m.type !== type) return;
+  save.missionProg = (save.missionProg || 0) + amount;
+  if (save.missionProg >= m.target) {
+    save.coins += m.reward;
+    runCoins += m.reward;
+    save.missionIdx = (save.missionIdx + 1) % MISSIONS.length;
+    save.missionProg = 0;
+    localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
+    sound.playMorphPowerup();
+    spawnExplosion3D(playerRoot.position, 0x00ff87, 26);
+    showComicPopup(`🎯 MISSION COMPLETE! +${m.reward} <span class="coin-icon" style="width:24px;height:24px;vertical-align:middle;"></span>`, "#00ff87");
+  }
+  document.getElementById('coinVal').innerText = save.coins;
+  updateMissionBanner();
+}
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -2028,6 +2255,8 @@ function animate() {
   shockCones.forEach(sc => {
     sc.halo.scale.set(plumeGirth, plumeGirth, plumeLen * 1.05);
     sc.core.scale.set(plumeGirth, plumeGirth, plumeLen * 0.62);
+    const mouth = 0.13 + plumeLen * 0.09;
+    sc.heart.scale.set(mouth, mouth, mouth);
   });
 
   for (let i = exhaustPlumes.length - 1; i >= 0; i--) {
@@ -2040,19 +2269,18 @@ function animate() {
     if (!ep.isSpark) {
       if (ep.isMorphed) {
         ep.sprite.material.color.setHex(ep.life > 0.66 ? 0xfff0cf : (ep.life > 0.36 ? 0xffab3d : 0xff5a1e));
-        const s = 0.05 + ep.life * 0.16;
-        ep.sprite.scale.set(s, s, s);
       } else {
         if (ep.life > 0.72) ep.sprite.material.color.setHex(0x00f2fe);
         else if (ep.life > 0.4) ep.sprite.material.color.setHex(spec.flameHex);
         else ep.sprite.material.color.setHex(0xff0066);
-
-        const s = Math.max(0.05, (1.1 - ep.life) * 0.36);
-        ep.sprite.scale.set(s, s, s);
       }
     }
 
-    ep.sprite.material.opacity = Math.max(0, ep.life * (ep.isMorphed ? 0.2 : 0.3));
+    // Embers shrink as they cool. They used to swell on the way out, which put a fat additive quad
+    // over the rear bodywork right when it was closest to the camera.
+    const s = ep.s0 * (0.4 + Math.max(0, ep.life) * 0.6);
+    ep.sprite.scale.set(s, s, s);
+    ep.sprite.material.opacity = Math.max(0, ep.life * ep.a0);
     if (ep.life <= 0) {
       scene.remove(ep.sprite);
       exhaustPlumes.splice(i, 1);
@@ -2069,9 +2297,10 @@ function animate() {
   }
 
   if (state === 'MENU' || state === 'RESULTS') {
-    afterburnerNozzles.visible = false;
-    exhaustLight.intensity = 0;
-    if (!isDraggingShowroom) showroomAngle += 0.009;
+    const neonBay = garageTab === 'neon';
+    afterburnerNozzles.visible = neonBay;
+    exhaustLight.intensity = neonBay ? 0.9 : 0;
+    if (!isDraggingShowroom) showroomAngle += 0.011;
     playerRoot.position.set(0, 0.02, 0);
     contactShadow.visible = true;
     playerRoot.rotation.set(0, showroomAngle, 0);
@@ -2084,9 +2313,15 @@ function animate() {
     const fovTarget = garageTab === 'showroom' ? 47 : garageTab === 'tuning' ? 41 : 36;
     camera.fov += (fovTarget - camera.fov) * 0.07;
     camera.updateProjectionMatrix();
-    camera.position.lerp(showroomCamTarget.clone().add(new THREE.Vector3(breathe * 0.22, breathe * 0.07, -breathe * 0.05)), 0.08);
-    // The garage deck grew ~120px taller, so aim below the car to keep it clear of the panels.
-    camera.lookAt(showroomLookTarget.x, showroomLookTarget.y - 0.3, showroomLookTarget.z);
+    // The garage deck is tall, so aim below the car to keep it clear of the panels.
+    _camScratch.copy(showroomCamTarget);
+    _camScratch.x += breathe * 0.22;
+    _camScratch.y += breathe * 0.07;
+    _camScratch.z -= breathe * 0.05;
+    camera.position.lerp(_camScratch, 0.08);
+    _lookScratch.set(showroomLookTarget.x, showroomLookTarget.y - 0.3, showroomLookTarget.z);
+    currentLookAt.lerp(_lookScratch, 0.1);
+    camera.lookAt(currentLookAt);
     composer.render();
     return;
   }
@@ -2094,22 +2329,88 @@ function animate() {
   // PLAYING STATE
   afterburnerNozzles.visible = !isJetMorph;
   contactShadow.visible = false;
-  exhaustLight.position.y += ((isJetMorph ? JET_Y : (morphTimer > 0 ? 0.8 : 0.32)) - exhaustLight.position.y) * 0.18;
+  exhaustLight.position.y += ((isJetMorph ? JET_Y : (morphTimer > 0 ? 0.8 : 0.18)) - exhaustLight.position.y) * 0.18;
   // Every rig parks its light behind its own bodywork. The truck's shell runs back to z 2.94, so the
-  // car's z 3.3 buried a candela point light inside the rear panel and blew it out to a white ball.
-  exhaustLight.position.z += ((isJetMorph ? 4.2 : (morphTimer > 0 ? 4.7 : 3.3)) - exhaustLight.position.z) * 0.18;
-  exhaustLight.intensity = morphTimer > 0 ? 0.8 + Math.random() * 0.3 : (1.3 + Math.random() * 0.6) * boostMult;
+  // car's z 3.3 buried a candela point light inside the rear panel and blew it out to a white ball —
+  // and the car's own bumper ends at z ~2.2, so 3.3 did exactly the same thing one size up.
+  exhaustLight.position.z += ((isJetMorph ? 4.2 : (morphTimer > 0 ? 4.7 : 4)) - exhaustLight.position.z) * 0.18;
+  exhaustLight.intensity = morphTimer > 0 ? 0.8 + Math.random() * 0.3 : (0.6 + Math.random() * 0.15) * boostMult;
   bloomPass.threshold = morphTimer > 0 ? 1.1 : 0.95;
-  underglow.material.opacity = morphTimer > 0 ? 0.14 : 0.18;
+  underglow.material.opacity = morphTimer > 0 ? 0.24 : 0.3;
   playerRoot.rotation.y = 0;
-  speed = Math.min(1.68, 0.82 + score * 0.00045);
+
+  // Biome palette eases in over ~1s so a shift never pops.
+  scene.fog.color.lerp(targetFogColor, 0.03);
+  gradePass.uniforms.tint.value.lerp(targetTint, 0.03);
+  lampHeadMat.color.lerp(targetLampColor, 0.03);
+
+  const carBonus = (finalSpeed(save.selectedCar) - 78) * 0.0022;
+  if (nitroPadBoost > 0) nitroPadBoost--;
+  speed = Math.min(1.86, 0.82 + score * 0.00045 + carBonus + (nitroPadBoost > 0 ? 0.22 : 0));
   score += speed * 0.42;
 
   // Milestone Toasts every 500m
   if (score >= nextMilestone) {
     showComicPopup(`🏁 ${nextMilestone}m SPEED BOOST!`, "#00f2fe");
     sound.playCoinChime(7);
+    shiftBiome(nextMilestone / 500);
+    if (nextMilestone >= 800) advanceMission('dist', 800);
     nextMilestone += 500;
+  }
+
+  // 360° mid-air barrel roll while a stunt ramp has the car airborne. The jet owns its own
+  // rotation.z further down, so only the car and the truck get rolled.
+  if (barrelRollAngle > 0) {
+    barrelRollAngle = Math.max(0, barrelRollAngle - 0.24);
+    playerCarMesh.rotation.z = barrelRollAngle;
+    monsterTruckGroup.rotation.z = barrelRollAngle;
+  } else {
+    playerCarMesh.rotation.z = 0;
+    monsterTruckGroup.rotation.z = 0;
+  }
+
+  // Stunt ramps and nitro pads, staggered so they never land on top of a reflex gate
+  if (tick % 190 === 95 && (!brainGateGroup || brainGateGroup.position.z > -60)) {
+    spawnStuntRamp3D(Math.floor(Math.random() * 3));
+  }
+  if (tick % 190 === 8) spawnBoostPad3D(Math.floor(Math.random() * 3));
+
+  // Shared materials, so every kicker on screen breathes as one set piece.
+  const rampPulse = 0.78 + Math.sin(tick * 0.16) * 0.22;
+  rampLipMat.color.copy(RAMP_LIP_BASE).multiplyScalar(rampPulse);
+  rampRailMat.color.copy(RAMP_RAIL_BASE).multiplyScalar(rampPulse);
+
+  for (let i = ramps.length - 1; i >= 0; i--) {
+    const r = ramps[i];
+    r.position.z += speed * 1.45;
+    if (Math.abs(r.position.z - playerRoot.position.z) < 2.2 && Math.abs(r.position.x - playerRoot.position.x) < 1.5 && playerY < 0.6) {
+      velY = 0.58;
+      barrelRollAngle = Math.PI * 2;
+      save.coins += 25; runCoins += 25;
+      boostCombo();
+      advanceMission('stunt', 1);
+      sound.playJumpWhoosh();
+      sound.playCoinChime(6);
+      spawnExplosion3D(playerRoot.position, 0x00f2fe, 18);
+      showComicPopup("🌪️ BARREL ROLL! +25", "#00f2fe");
+      scene.remove(r); ramps.splice(i, 1);
+      continue;
+    }
+    if (r.position.z > 14) { scene.remove(r); ramps.splice(i, 1); }
+  }
+
+  for (let i = boostPads.length - 1; i >= 0; i--) {
+    const p = boostPads[i];
+    p.position.z += speed * 1.45;
+    if (Math.abs(p.position.z - playerRoot.position.z) < 2.4 && Math.abs(p.position.x - playerRoot.position.x) < 1.6 && playerY < 0.9) {
+      nitroPadBoost = 110;
+      sound.playMorphPowerup();
+      spawnExplosion3D(playerRoot.position, 0xffea00, 16);
+      showComicPopup("🔥 NITRO PAD!", "#ffea00");
+      scene.remove(p); boostPads.splice(i, 1);
+      continue;
+    }
+    if (p.position.z > 14) { scene.remove(p); boostPads.splice(i, 1); }
   }
 
   // Combo Decay
@@ -2294,6 +2595,7 @@ function animate() {
         smashes++;
         const bonus = 5 * combo;
         save.coins += bonus; runCoins += bonus;
+        advanceMission('smash', 1);
         boostCombo();
         shakeIntensity = 0.5;
         sound.playCrashImpact();
@@ -2315,6 +2617,7 @@ function animate() {
       boostCombo();
       const nmBonus = 5 * combo;
       save.coins += nmBonus; runCoins += nmBonus;
+      advanceMission('nearmiss', 1);
       sound.playCoinChime(combo + 3);
       showComicPopup(`🔥 NEAR MISS! x${combo}`, "#00f2fe");
     }

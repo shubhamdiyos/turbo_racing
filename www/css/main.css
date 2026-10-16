@@ -222,7 +222,8 @@ canvas { width: 100% !important; height: 100% !important; display: block; }
 
 .spin-badge {
   position: absolute;
-  top: 126px;
+  /* Clear of the garage header stack: the mission pill now shares this row and used to sit on top. */
+  top: 172px;
   left: 14px;
   background: rgba(0, 242, 254, 0.12);
   border: 1.5px solid rgba(0, 242, 254, 0.4);
@@ -450,3 +451,26 @@ canvas { width: 100% !important; height: 100% !important; display: block; }
   text-align: center;
 }
 .btn-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #005c2d, 0 6px 16px rgba(0, 255, 135, 0.4); }
+
+/* ============================================================
+   MISSION TRACKER + BIOME STREAKS
+   ============================================================ */
+.mission-pill {
+  margin-top: 6px;
+  background: linear-gradient(90deg, rgba(127, 0, 255, 0.85), rgba(0, 114, 255, 0.85));
+  border: 1.5px solid #00ff87;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 4px 12px;
+  border-radius: 99px;
+  box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3);
+  pointer-events: auto;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mission-pill #missionTxt { color: #eafff4; }
+.mission-reward { color: #00ff87; font-weight: 700; }
