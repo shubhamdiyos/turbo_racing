@@ -24,6 +24,7 @@
   <div class="hud">
     <div class="hud-left">
       <div class="hud-pill gold"><span class="coin-icon"></span> <span id="coinVal">500</span></div>
+      <button class="crate-btn" id="crateBtn" onclick="window.claimFreeCrate()">🎁 +150</button>
       <div class="hud-pill combo" id="comboPill">🔥 x2</div>
       <div class="hud-pill magnet" id="magnetPill">🧲<span class="mag-track"><span id="magnetBarFill"></span></span></div>
     </div>
@@ -50,60 +51,105 @@
   <div id="brainBanner">⚡ 6 + 6 = ?</div>
   <div id="comicPopup">MEGA MORPH!</div>
 
-  <!-- 3D Showroom Garage Overlay -->
+  <!-- 2026 AAA Interactive 3D Showroom Garage Overlay -->
   <div id="menuOverlay">
-    <div class="menu-top">
+    <div class="garage-header">
       <div class="game-logo" id="menuTitle">TURBO MORPH</div>
-      <div class="menu-meta">
-        <span class="meta-chip"><i>🏆</i>BEST <b id="bestScoreBadge">0</b>M</span>
-        <span class="meta-chip ghost"><i>↔</i>DRAG TO SPIN</span>
-      </div>
+      <div class="record-pill">🏆 BEST RECORD: <span id="bestScoreBadge">0</span>m</div>
     </div>
 
-    <div class="menu-bottom">
+    <!-- Floating Showroom Controls over the 3D Turntable -->
+    <div class="spin-badge">↔ DRAG CAR TO SPIN 360°</div>
+    <div class="showroom-float-bar">
+      <button class="float-pill" id="morphPreviewBtn" onclick="window.toggleMorphPreview()">
+        🦖 PREVIEW MORPH
+      </button>
+      <button class="float-pill" onclick="window.resetShowroomCamera()">
+        🎥 RESET VIEW
+      </button>
+    </div>
+
+    <!-- Bottom AAA Garage Deck -->
+    <div class="garage-deck">
+      <!-- 4-Car Visual Thumbnail Carousel -->
+      <div class="car-dock">
+        <button class="dock-arrow" onclick="window.cycleCar(-1)" aria-label="Previous car">◀</button>
+        <div class="car-carousel" id="carCarousel"></div>
+        <button class="dock-arrow" onclick="window.cycleCar(1)" aria-label="Next car">▶</button>
+      </div>
+
+      <!-- Main Glassmorphic Inspection & Workshop Card -->
       <div class="garage-card">
-        <div class="car-selector-top">
-          <button class="arrow-btn" onclick="window.cycleCar(-1)" aria-label="Previous car"><span>‹</span></button>
-          <div class="car-info">
-            <div class="car-title-row">
-              <span class="car-title" id="carNameTxt">FERRARI 458 CYBER</span>
-              <span class="owned-tag" id="carOwnedTag">OWNED</span>
-            </div>
-            <div class="car-morph-row">
-              <span class="morph-label">MORPH</span>
-              <span class="car-morph-tag" id="carMorphTxt">🦖 Mecha Rex-Truck</span>
-            </div>
-          </div>
-          <button class="arrow-btn" onclick="window.cycleCar(1)" aria-label="Next car"><span>›</span></button>
+        <div class="garage-tabs">
+          <button class="g-tab active" id="tabShowroom" onclick="window.switchGarageTab('showroom')">🏎️ SHOWROOM</button>
+          <button class="g-tab" id="tabTuning" onclick="window.switchGarageTab('tuning')">🔧 TUNING BAY</button>
+          <button class="g-tab" id="tabNeon" onclick="window.switchGarageTab('neon')">🎨 NEON STUDIO</button>
         </div>
 
-        <div class="stats-grid">
+        <div class="car-header-bar">
+          <div>
+            <div class="car-title" id="carNameTxt">FERRARI 458 CYBER</div>
+            <div class="car-morph-sub" id="carMorphTxt">Morphs into: 🦖 Mecha Rex-Truck</div>
+          </div>
+          <span class="owned-tag" id="carOwnedTag">OWNED</span>
+        </div>
+
+        <!-- TAB 1: Performance Telemetry Bars -->
+        <div class="stats-grid" id="panelShowroom">
           <div class="stat-box">
-            <div class="stat-head"><span>SPD</span><span id="statSpdVal">85%</span></div>
+            <div class="stat-head"><span>SPEED</span><span class="stat-val-txt" id="statSpdVal">85%</span></div>
             <div class="stat-track"><div class="stat-fill" id="statSpdBar" style="width:85%;"></div></div>
           </div>
           <div class="stat-box">
-            <div class="stat-head"><span>MORPH</span><span id="statMorphVal">8.0s</span></div>
+            <div class="stat-head"><span>MORPH</span><span class="stat-val-txt" id="statMorphVal">8.0s</span></div>
             <div class="stat-track"><div class="stat-fill" id="statMorphBar" style="width:70%;"></div></div>
           </div>
           <div class="stat-box">
-            <div class="stat-head"><span>MAG</span><span id="statMagVal">LV.1</span></div>
+            <div class="stat-head"><span>MAGNET</span><span class="stat-val-txt" id="statMagVal">LV.1</span></div>
             <div class="stat-track"><div class="stat-fill" id="statMagBar" style="width:60%;"></div></div>
+          </div>
+        </div>
+
+        <!-- TAB 2: 3-System Tuning Workshop -->
+        <div class="tuning-grid" id="panelTuning">
+          <div class="tune-card">
+            <div class="tune-title">⚡ ENGINE</div>
+            <div class="tune-pips" id="pipsSpeed"></div>
+            <button class="tune-btn" id="btnUpgSpeed" onclick="window.upgradePart('speed')">🪙 150</button>
+          </div>
+          <div class="tune-card">
+            <div class="tune-title">🦖 MORPH CORE</div>
+            <div class="tune-pips" id="pipsMorph"></div>
+            <button class="tune-btn" id="btnUpgMorph" onclick="window.upgradePart('morph')">🪙 150</button>
+          </div>
+          <div class="tune-card">
+            <div class="tune-title">🧲 MAGNET</div>
+            <div class="tune-pips" id="pipsMagnet"></div>
+            <button class="tune-btn" id="btnUpgMagnet" onclick="window.upgradePart('magnet')">🪙 150</button>
+          </div>
+        </div>
+
+        <!-- TAB 3: Live Neon Rim & Underglow Studio -->
+        <div class="paint-studio" id="panelNeon">
+          <div style="font-size:11px;font-weight:900;color:#aaa;text-align:center;">
+            SELECT CUSTOM RIM &amp; EXHAUST PLASMA COLOR:
+          </div>
+          <div class="swatch-row">
+            <button class="neon-swatch active" data-hex="00f2fe" style="background:#00f2fe;color:#00f2fe;" onclick="window.setNeonAccent(0x00f2fe, this)"></button>
+            <button class="neon-swatch" data-hex="ff0066" style="background:#ff0066;color:#ff0066;" onclick="window.setNeonAccent(0xff0066, this)"></button>
+            <button class="neon-swatch" data-hex="00ff87" style="background:#00ff87;color:#00ff87;" onclick="window.setNeonAccent(0x00ff87, this)"></button>
+            <button class="neon-swatch" data-hex="ffea00" style="background:#ffea00;color:#ffea00;" onclick="window.setNeonAccent(0xffea00, this)"></button>
+            <button class="neon-swatch" data-hex="b86bff" style="background:#b86bff;color:#b86bff;" onclick="window.setNeonAccent(0xb86bff, this)"></button>
           </div>
         </div>
       </div>
 
-      <button class="btn-play" id="mainPlayBtn" onclick="window.handleMainBtn()">
-        <span class="btn-label">TAP TO RACE</span><span class="btn-chev">▸</span>
-      </button>
-
-      <div class="action-row">
-        <button class="btn-sub" id="headstartBtn" onclick="window.useHeadstartMorph()">
-          <span class="sub-ico">🚀</span><span class="sub-txt">HEADSTART</span><span class="cost"><span class="coin-icon mini"></span>100</span>
+      <!-- Primary Launch & Headstart Row -->
+      <div class="launch-row">
+        <button class="btn-headstart" id="headstartBtn" onclick="window.useHeadstartMorph()">
+          🚀 MORPH START<br><span class="coin-icon" style="width:12px;height:12px;vertical-align:middle;"></span> 100
         </button>
-        <button class="btn-sub cyan" id="upgradeBtn" onclick="window.upgradeNitro()">
-          <span class="sub-ico">⚡</span><span class="sub-txt">NITRO LV.1</span><span class="cost"><span class="coin-icon mini"></span>150</span>
-        </button>
+        <button class="btn-play" id="mainPlayBtn" onclick="window.handleMainBtn()">TAP TO RACE! 🏁</button>
       </div>
     </div>
   </div>

@@ -27,12 +27,33 @@ if (!save.settings) {
   save.settings = { music: true, sfx: true, voice: true, haptics: true, controls: 'both' };
 }
 
+// The 3-system workshop replaces the old single Nitro ladder, but runs before this update spent
+// coins on nitroLevel (up to 11). Seed MORPH/MAGNET from it so paid-for progress survives.
+if (!save.tuning) {
+  save.tuning = { speed: 1, morph: Math.min(5, save.nitroLevel || 1), magnet: Math.min(5, save.nitroLevel || 1) };
+}
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
 const CAR_SPECS = [
-  { name: "FERRARI 458 CYBER", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "🦖 Mecha Rex-Truck", type: "truck", baseSpd: 78 },
-  { name: "NEON VIPER 458", hex: 0x00e5ff, rimHex: 0xff0066, flameHex: 0xff0066, price: 300, morph: "✈️ Supersonic Stealth Jet", type: "jet", baseSpd: 85 },
-  { name: "EMERALD HYPER 458", hex: 0x00ff66, rimHex: 0xffea00, flameHex: 0x00ff87, price: 750, morph: "🦖 Neon Crusher Rig", type: "truck", baseSpd: 92 },
-  { name: "ROYAL GOLD 458", hex: 0xffb800, rimHex: 0xffffff, flameHex: 0xffae00, price: 1500, morph: "✈️ Golden Valkyrie Jet", type: "jet", baseSpd: 100 }
+  { name: "FERRARI 458 CYBER", short: "458 CYBER", tier: "CORE", hex: 0xff0033, rimHex: 0x00f2fe, flameHex: 0x00f2fe, price: 0, morph: "🦖 Mecha Rex-Truck", type: "truck", baseSpd: 78 },
+  { name: "NEON VIPER 458", short: "VIPER 458", tier: "RARE", hex: 0x00e5ff, rimHex: 0xff0066, flameHex: 0xff0066, price: 300, morph: "✈️ Supersonic Stealth Jet", type: "jet", baseSpd: 85 },
+  { name: "EMERALD HYPER 458", short: "HYPER 458", tier: "EPIC", hex: 0x00ff66, rimHex: 0xffea00, flameHex: 0x00ff87, price: 750, morph: "🦖 Neon Crusher Rig", type: "truck", baseSpd: 92 },
+  { name: "ROYAL GOLD 458", short: "GOLD 458", tier: "MYTHIC", hex: 0xffb800, rimHex: 0xffffff, flameHex: 0xffae00, price: 1500, morph: "✈️ Golden Valkyrie Jet", type: "jet", baseSpd: 100 }
 ];
+
+// Neon accents are player-chosen per car, so they live in the save, not in CAR_SPECS defaults.
+if (save.neonAccents) {
+  CAR_SPECS.forEach((c, i) => {
+    if (typeof save.neonAccents[i] === 'number') { c.rimHex = c.flameHex = save.neonAccents[i]; }
+  });
+}
+
+const MORPH_MS = [520, 580, 640, 700, 760];   // frames per MORPH CORE level
+
+let garageTab = 'showroom'; // 'showroom' | 'tuning' | 'neon'
+let isMorphPreview = false;
+let showroomCamTarget = new THREE.Vector3(0, 2.15, 6.5);
+let showroomLookTarget = new THREE.Vector3(0, 0.55, 0);
 
 let state = 'MENU'; // 'MENU' | 'PLAYING' | 'PAUSED' | 'RESULTS'
 const sound = new AAASoundSystem();
@@ -1486,6 +1507,34 @@ function syncSettingsUI() {
   document.getElementById('ctrlBoth').classList.toggle('active', cMode === 'both');
 }
 
+function tuningLevel(part) {
+  return Math.max(1, Math.min(5, save.tuning[part] || 1));
+}
+// Normalised so every level on every car moves the bar — raw baseSpd tops out at 100.
+function speedPct(finalSpd) {
+  return Math.round(55 + ((finalSpd - 78) / 46) * 45);
+}
+function finalSpeed(idx) {
+  return CAR_SPECS[idx].baseSpd + (tuningLevel('speed') - 1) * 6;
+}
+function morphSecs(idx) {
+  return (8.0 + tuningLevel('morph') * 1.5 + idx * 0.5).toFixed(1);
+}
+function morphFrames() {
+  return 480 + tuningLevel('morph') * 90;
+}
+function magnetFrames() {
+  return 240 + tuningLevel('magnet') * 40;
+}
+function pipBar(el, lvl) {
+  el.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const s = document.createElement('span');
+    s.className = `pip${i < lvl ? ' filled' : ''}`;
+    el.appendChild(s);
+  }
+}
+
 function syncUI() {
   localStorage.setItem('tm3d_arcade_v3', JSON.stringify(save));
   document.getElementById('coinVal').innerText = save.coins;
@@ -1495,40 +1544,72 @@ function syncUI() {
   const spec = CAR_SPECS[save.selectedCar];
   const owned = save.unlocked.includes(save.selectedCar);
   document.getElementById('carNameTxt').innerText = spec.name;
-  document.getElementById('carMorphTxt').innerText = spec.morph;
+  document.getElementById('carMorphTxt').innerText = `Morphs into: ${spec.morph}`;
 
   const ownedTag = document.getElementById('carOwnedTag');
-  ownedTag.innerText = owned ? 'OWNED' : `🪙 ${spec.price}`;
+  ownedTag.innerText = owned ? '✓ EQUIPPED' : `🔒 ${spec.price}`;
   ownedTag.className = `owned-tag ${owned ? '' : 'locked'}`;
 
-  // Update Garage Performance Stat Bars
-  const morphSecs = (8.0 + save.nitroLevel * 0.75 + save.selectedCar * 0.5).toFixed(1);
-  const morphPct = Math.min(100, Math.floor((parseFloat(morphSecs) / 14) * 100));
-  const magPct = Math.min(100, 45 + save.nitroLevel * 10);
+  // 4-car thumbnail dock
+  const carousel = document.getElementById('carCarousel');
+  carousel.innerHTML = '';
+  CAR_SPECS.forEach((c, i) => {
+    const isOwned = save.unlocked.includes(i);
+    const thumb = document.createElement('button');
+    thumb.className = `car-thumb${save.selectedCar === i ? ' active' : ''}${isOwned ? '' : ' locked-thumb'}`;
+    thumb.onclick = () => window.selectCar(i);
+    thumb.innerHTML = `<span class="thumb-swatch" style="background:#${c.hex.toString(16).padStart(6, '0')};color:#${c.hex.toString(16).padStart(6, '0')};"></span>`
+      + `<span class="thumb-name">${c.short}</span>`
+      + `<span class="thumb-tier tier-${c.tier}">${isOwned ? c.tier : '🔒' + c.price}</span>`;
+    carousel.appendChild(thumb);
+  });
 
-  document.getElementById('statSpdVal').innerText = `${spec.baseSpd}%`;
-  document.getElementById('statSpdBar').style.width = `${spec.baseSpd}%`;
-  document.getElementById('statMorphVal').innerText = `${morphSecs}s`;
-  document.getElementById('statMorphBar').style.width = `${morphPct}%`;
-  document.getElementById('statMagVal').innerText = `LV.${save.nitroLevel}`;
+  // Telemetry bars
+  const spd = finalSpeed(save.selectedCar);
+  const spdPct = speedPct(spd);
+  const mSecs = morphSecs(save.selectedCar);
+  const magPct = Math.min(100, 40 + tuningLevel('magnet') * 12);
+  document.getElementById('statSpdVal').innerText = `${spdPct}%`;
+  document.getElementById('statSpdBar').style.width = `${spdPct}%`;
+  document.getElementById('statMorphVal').innerText = `${mSecs}s`;
+  document.getElementById('statMorphBar').style.width = `${Math.min(100, (parseFloat(mSecs) / 18) * 100)}%`;
+  document.getElementById('statMagVal').innerText = `LV.${tuningLevel('magnet')}`;
   document.getElementById('statMagBar').style.width = `${magPct}%`;
+
+  // Tuning bay pips + costs
+  [['speed', 'pipsSpeed', 'btnUpgSpeed'], ['morph', 'pipsMorph', 'btnUpgMorph'], ['magnet', 'pipsMagnet', 'btnUpgMagnet']]
+    .forEach(([part, pipsId, btnId]) => {
+      const lvl = tuningLevel(part);
+      pipBar(document.getElementById(pipsId), lvl);
+      const btn = document.getElementById(btnId);
+      if (lvl >= 5) {
+        btn.innerText = 'MAX';
+        btn.classList.add('maxed');
+      } else {
+        btn.innerHTML = `<span class="coin-icon mini"></span> ${lvl * 150}`;
+        btn.classList.remove('maxed');
+      }
+    });
+
+  // Neon studio swatch state
+  document.querySelectorAll('.neon-swatch').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.hex, 16) === spec.rimHex);
+  });
+
+  // The crate is a garage affordance — keep it out of the race HUD.
+  const crateOk = save.crateDay !== todayKey() && state === 'MENU';
+  document.getElementById('crateBtn').style.display = crateOk ? 'flex' : 'none';
+  document.getElementById('headstartBtn').style.display = owned ? 'none' : 'flex';
 
   const mainBtn = document.getElementById('mainPlayBtn');
   mainBtn.classList.toggle('locked', !owned);
   mainBtn.innerHTML = owned
     ? '<span class="btn-label">TAP TO RACE</span><span class="btn-chev">▸</span>'
-    : `<span class="btn-label">UNLOCK ${spec.name}</span><span class="cost"><span class="coin-icon mini"></span>${spec.price}</span>`;
-
-  const upgCost = save.nitroLevel * 150;
-  document.getElementById('upgradeBtn').innerHTML = `<span class="sub-ico">⚡</span><span class="sub-txt">NITRO LV.${save.nitroLevel}</span><span class="cost"><span class="coin-icon mini"></span>${upgCost}</span>`;
+    : `<span class="btn-label">UNLOCK ${spec.short}</span><span class="cost"><span class="coin-icon mini"></span>${spec.price}</span>`;
 }
 
 window.cycleCar = (dir) => {
-  sound.init(() => state === 'PLAYING');
-  save.selectedCar = (save.selectedCar + dir + CAR_SPECS.length) % CAR_SPECS.length;
-  updatePlayerPaint();
-  sound.triggerExhaustBackfire();
-  syncUI();
+  window.selectCar((save.selectedCar + dir + CAR_SPECS.length) % CAR_SPECS.length);
 };
 
 window.handleMainBtn = () => {
@@ -1547,18 +1628,117 @@ window.handleMainBtn = () => {
   }
 };
 
-window.upgradeNitro = () => {
+window.selectCar = (idx) => {
   sound.init(() => state === 'PLAYING');
-  const cost = save.nitroLevel * 150;
+  save.selectedCar = idx;
+  updatePlayerPaint();
+  if (isMorphPreview) {
+    const morphType = CAR_SPECS[idx].type;
+    playerCarMesh.visible = false;
+    monsterTruckGroup.visible = (morphType === 'truck');
+    cyberJetGroup.visible = (morphType === 'jet');
+  }
+  sound.triggerExhaustBackfire();
+  syncUI();
+};
+
+window.switchGarageTab = (tab) => {
+  sound.init(() => state === 'PLAYING');
+  garageTab = tab;
+  sound.playCoinChime(3);
+
+  document.getElementById('tabShowroom').classList.toggle('active', tab === 'showroom');
+  document.getElementById('tabTuning').classList.toggle('active', tab === 'tuning');
+  document.getElementById('tabNeon').classList.toggle('active', tab === 'neon');
+
+  document.getElementById('panelShowroom').style.display = tab === 'showroom' ? 'grid' : 'none';
+  document.getElementById('panelTuning').style.display = tab === 'tuning' ? 'grid' : 'none';
+  document.getElementById('panelNeon').style.display = tab === 'neon' ? 'flex' : 'none';
+
+  // Swoop the showroom camera to match the active inspection bay
+  if (tab === 'showroom') {
+    showroomCamTarget.set(0, 2.15, 6.5);
+    showroomLookTarget.set(0, 0.55, 0);
+  } else if (tab === 'tuning') {
+    showroomCamTarget.set(2.4, 1.55, 5.2);
+    showroomLookTarget.set(0, 0.65, 0);
+  } else if (tab === 'neon') {
+    showroomCamTarget.set(-2.2, 1.05, 4.9);
+    showroomLookTarget.set(0, 0.35, 0);
+  }
+};
+
+window.toggleMorphPreview = () => {
+  sound.init(() => state === 'PLAYING');
+  isMorphPreview = !isMorphPreview;
+  const btn = document.getElementById('morphPreviewBtn');
+  btn.classList.toggle('morph-active', isMorphPreview);
+  btn.innerText = isMorphPreview ? '🏎️ NORMAL VIEW' : '🦖 PREVIEW MORPH';
+
+  const morphType = CAR_SPECS[save.selectedCar].type;
+  playerCarMesh.visible = !isMorphPreview;
+  monsterTruckGroup.visible = isMorphPreview && morphType === 'truck';
+  cyberJetGroup.visible = isMorphPreview && morphType === 'jet';
+
+  spawnExplosion3D(playerRoot.position, isMorphPreview ? 0x00ff87 : 0x00f2fe, 22);
+  sound.playMorphPowerup();
+};
+
+window.resetShowroomCamera = () => {
+  showroomAngle = 0.6;
+  isMorphPreview = false;
+  playerCarMesh.visible = true;
+  monsterTruckGroup.visible = false;
+  cyberJetGroup.visible = false;
+  document.getElementById('morphPreviewBtn').classList.remove('morph-active');
+  document.getElementById('morphPreviewBtn').innerText = '🦖 PREVIEW MORPH';
+  window.switchGarageTab('showroom');
+};
+
+window.upgradePart = (part) => {
+  sound.init(() => state === 'PLAYING');
+  const lvl = tuningLevel(part);
+  if (lvl >= 5) {
+    showComicPopup('MAX LEVEL REACHED!', "#00ff87");
+    return;
+  }
+  const cost = lvl * 150;
   if (save.coins >= cost) {
     save.coins -= cost;
-    save.nitroLevel++;
+    save.tuning[part] = lvl + 1;
+    save.nitroLevel = Math.max(save.nitroLevel || 1, save.tuning.morph);
+    spawnExplosion3D(playerRoot.position, 0x00ff87, 20);
     sound.playMorphPowerup();
-    showComicPopup(`NITRO LV.${save.nitroLevel} UPGRADED!`, "#00f2fe");
+    showComicPopup(`${part.toUpperCase()} LV.${save.tuning[part]}!`, "#00ff87");
     syncUI();
   } else {
-    showComicPopup(`NEED ${cost - save.coins} MORE COINS!`, "#ff9100");
+    showComicPopup(`NEED ${cost - save.coins} COINS!`, "#ff0055");
   }
+};
+
+window.setNeonAccent = (hexColor, btnEl) => {
+  sound.init(() => state === 'PLAYING');
+  const spec = CAR_SPECS[save.selectedCar];
+  spec.rimHex = spec.flameHex = hexColor;
+  save.neonAccents = save.neonAccents || {};
+  save.neonAccents[save.selectedCar] = hexColor;
+  neonRing.material.color.setHex(hexColor);
+  updatePlayerPaint();
+  sound.playCoinChime(5);
+  document.querySelectorAll('.neon-swatch').forEach(el => el.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  syncUI();
+};
+
+window.claimFreeCrate = () => {
+  sound.init(() => state === 'PLAYING');
+  if (save.crateDay === todayKey()) return;
+  save.crateDay = todayKey();
+  save.coins += 150;
+  sound.playMorphPowerup();
+  spawnExplosion3D(playerRoot.position, 0xffd700, 24);
+  showComicPopup("🎁 +150 BONUS COINS!", "#ffd700");
+  syncUI();
 };
 
 window.useHeadstartMorph = () => {
@@ -1584,7 +1764,7 @@ window.useReviveShield = () => {
   document.getElementById('pauseBtn').style.display = 'flex';
   podiumGroup.visible = false;
   obstacles.forEach(o => scene.remove(o)); obstacles = [];
-  activateMorphState(480 + save.nitroLevel * 45);
+  activateMorphState(morphFrames());
   sound.isPaused = false;
   state = 'PLAYING';
 };
@@ -1627,6 +1807,7 @@ function startRun(withMorph) {
     save.selectedCar = 0; updatePlayerPaint();
   }
   document.getElementById('menuOverlay').style.display = 'none';
+  document.getElementById('crateBtn').style.display = 'none';
   document.getElementById('pauseModal').style.display = 'none';
   document.getElementById('settingsModal').style.display = 'none';
   document.getElementById('resultsModal').style.display = 'none';
@@ -1645,14 +1826,20 @@ function startRun(withMorph) {
   document.getElementById('comboPill').style.display = 'none';
 
   const spec = CAR_SPECS[save.selectedCar];
-  speed = 0.80 + (spec.baseSpd - 78) * 0.004;
+  speed = 0.80 + (finalSpeed(save.selectedCar) - 78) * 0.004;
   lane = 1;
   playerRoot.position.set(0, 0, 0);
   playerRoot.rotation.set(0, 0, 0);
   // Swoop camera from high behind on launch
   camera.position.set(0, 6.2, 12.5);
 
-  if (withMorph) activateMorphState(500 + save.nitroLevel * 45);
+  // Launching a run takes over the morph meshes, so drop any showroom preview state first.
+  isMorphPreview = false;
+  const pvBtn = document.getElementById('morphPreviewBtn');
+  pvBtn.classList.remove('morph-active');
+  pvBtn.innerText = '🦖 PREVIEW MORPH';
+
+  if (withMorph) activateMorphState(morphFrames() + 20);
   else {
     morphTimer = 0;
     shieldTimer = 90; // 1.5s launch shield
@@ -1892,11 +2079,14 @@ function animate() {
     tickSpin.rotation.y += 0.006;
     playerWheels.forEach(w => { w.rotation.x -= 0.02; });
     underglow.material.opacity = 0.34 + Math.sin(tick * 0.045) * 0.12;
+    // Breathe is added on top of the active bay's framing so the car never sits perfectly still.
     const breathe = Math.sin(tick * 0.011);
-    camera.fov += (47 - camera.fov) * 0.1;
+    const fovTarget = garageTab === 'showroom' ? 47 : garageTab === 'tuning' ? 41 : 36;
+    camera.fov += (fovTarget - camera.fov) * 0.07;
     camera.updateProjectionMatrix();
-    camera.position.lerp(new THREE.Vector3(breathe * 0.22, 1.9 + breathe * 0.07, 6.25 - breathe * 0.05), 0.08);
-    camera.lookAt(0, 0.34 + breathe * 0.02, 0);
+    camera.position.lerp(showroomCamTarget.clone().add(new THREE.Vector3(breathe * 0.22, breathe * 0.07, -breathe * 0.05)), 0.08);
+    // The garage deck grew ~120px taller, so aim below the car to keep it clear of the panels.
+    camera.lookAt(showroomLookTarget.x, showroomLookTarget.y - 0.3, showroomLookTarget.z);
     composer.render();
     return;
   }
@@ -2017,7 +2207,7 @@ function animate() {
 
   // Gold rings only fly to the car while a magnet (or a morph) is running - otherwise you have
   // to steer into their lane to bank them.
-  const pullRange = morphTimer > 0 ? 26 : (magnetTimer > 0 ? 8 + save.nitroLevel * 1.2 : 0);
+  const pullRange = morphTimer > 0 ? 26 : (magnetTimer > 0 ? 8 + tuningLevel('magnet') * 2.6 : 0);
   const pullWidth = morphTimer > 0 ? 4.4 : 5.4;
   const grabWidth = morphTimer > 0 ? 1.9 : 1.15;
   for (let i = coins.length - 1; i >= 0; i--) {
@@ -2051,7 +2241,7 @@ function animate() {
     m.rotation.y += 0.055;
     m.position.y = 1.1 + Math.sin(tick * 0.11) * 0.13;
     if (Math.abs(m.position.z - playerRoot.position.z) < 2.1 && Math.abs(m.position.x - playerRoot.position.x) < 1.5) {
-      magnetTimer = magnetMax = 240 + save.nitroLevel * 18;
+      magnetTimer = magnetMax = magnetFrames();
       document.getElementById('magnetPill').style.display = 'flex';
       sound.playMorphPowerup();
       showComicPopup('🧲 MAGNET!', '#ff2e7e');
@@ -2073,7 +2263,7 @@ function animate() {
     brainGateGroup.position.z += speed * 1.3;
     if (Math.abs(brainGateGroup.position.z - playerRoot.position.z) < 1.9) {
       if (lane === brainGateGroup.userData.correctLane) {
-        activateMorphState(480 + save.nitroLevel * 45);
+        activateMorphState(morphFrames());
         save.coins += 20; runCoins += 20;
         boostCombo();
         shakeIntensity = 0.6;

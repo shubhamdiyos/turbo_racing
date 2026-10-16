@@ -177,3 +177,276 @@ canvas { width: 100% !important; height: 100% !important; display: block; }
 .group-label { text-align: left; font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--dim); }
 .ctrl-chip { flex: 1; background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(126, 208, 255, 0.2); clip-path: var(--cut-sm); color: var(--dim); padding: 9px 5px; font-family: var(--display); font-weight: 700; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: 0.15s; }
 .ctrl-chip.active { background: linear-gradient(180deg, rgba(53, 230, 255, 0.24), rgba(47, 109, 255, 0.28)); color: #fff; border-color: var(--cyan); box-shadow: 0 0 18px rgba(53, 230, 255, 0.4), var(--lift); }
+
+/* ============================================================
+   2026 AAA INTERACTIVE SHOWROOM GARAGE
+   ============================================================ */
+.crate-btn {
+  background: linear-gradient(180deg, #ffae00, #ff5500);
+  border: 2px solid #fff;
+  border-radius: 99px;
+  padding: 6px 12px;
+  color: #fff;
+  font-family: var(--brand);
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #802b00, 0 0 15px rgba(255, 174, 0, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  animation: crateBounce 1.2s infinite alternate;
+}
+.crate-btn:active { transform: scale(0.94); }
+@keyframes crateBounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-2px) scale(1.04); }
+}
+
+#menuOverlay {
+  padding: max(62px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(4, 1, 16, 0.78) 0%, rgba(4, 1, 16, 0) 24%, rgba(4, 1, 16, 0) 48%, rgba(4, 1, 16, 0.96) 82%);
+}
+
+.garage-header { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+.record-pill {
+  background: rgba(255, 215, 0, 0.14);
+  border: 1.5px solid #ffd700;
+  color: #ffd700;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 12px;
+  border-radius: 99px;
+  letter-spacing: 0.8px;
+  margin-top: 4px;
+}
+
+.spin-badge {
+  position: absolute;
+  top: 126px;
+  left: 14px;
+  background: rgba(0, 242, 254, 0.12);
+  border: 1.5px solid rgba(0, 242, 254, 0.4);
+  color: #bdf8ff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.showroom-float-bar {
+  position: absolute;
+  top: 124px;
+  right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  z-index: 22;
+}
+.float-pill {
+  background: linear-gradient(135deg, rgba(28, 14, 72, 0.9), rgba(10, 4, 32, 0.95));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 2px solid var(--cyan);
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: 0.15s;
+  white-space: nowrap;
+}
+.float-pill:active { transform: scale(0.95); }
+.float-pill.morph-active {
+  background: linear-gradient(135deg, #ff0066, #ff8800);
+  border-color: #fff;
+  box-shadow: 0 0 20px #ff0066;
+}
+
+.garage-deck { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+
+/* Carousel dock with ◀ / ▶ steppers */
+.car-dock { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+.dock-arrow {
+  flex-shrink: 0;
+  width: 30px;
+  background: linear-gradient(180deg, rgba(56, 20, 48, 0.9), rgba(18, 8, 28, 0.95));
+  border: 1.5px solid rgba(255, 46, 126, 0.55);
+  border-radius: 14px;
+  color: #ffd9e6;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.09s, border-color 0.15s;
+}
+.dock-arrow:active { transform: scale(0.9); }
+.dock-arrow:hover { border-color: var(--magenta); color: #fff; box-shadow: 0 0 16px rgba(255, 46, 126, 0.5); }
+
+.car-carousel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 1; min-width: 0; }
+.car-thumb {
+  background: linear-gradient(180deg, rgba(22, 12, 58, 0.88), rgba(9, 4, 26, 0.95));
+  border: 2px solid rgba(0, 242, 254, 0.28);
+  border-radius: 14px;
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  transition: 0.15s;
+  font-family: var(--display);
+  color: #fff;
+  min-width: 0;
+}
+.car-thumb.active {
+  border-color: #00ff87;
+  background: linear-gradient(180deg, rgba(0, 255, 135, 0.22), rgba(12, 32, 48, 0.95));
+  box-shadow: 0 0 16px rgba(0, 255, 135, 0.45);
+  transform: translateY(-2px);
+}
+.car-thumb.locked-thumb { opacity: 0.62; }
+.thumb-swatch { width: 34px; height: 14px; border-radius: 99px; border: 2px solid #fff; box-shadow: 0 0 12px currentColor; }
+.thumb-name { font-size: 9px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; letter-spacing: 0.04em; }
+.thumb-tier { font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 6px; letter-spacing: 0.06em; }
+.tier-CORE { background: #00f2fe; color: #041b29; }
+.tier-RARE { background: #ff0066; color: #fff; }
+.tier-EPIC { background: #00ff87; color: #032b15; }
+.tier-MYTHIC { background: linear-gradient(90deg, #ffd700, #ff8800); color: #2b1400; }
+
+/* Inspection & workshop card — compact so the 3D car keeps the frame */
+.garage-card {
+  width: 100%;
+  background: linear-gradient(180deg, rgba(22, 12, 60, 0.94), rgba(9, 4, 28, 0.98));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 2px solid var(--cyan);
+  border-radius: 22px;
+  padding: 9px 11px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), inset 0 0 18px rgba(0, 242, 254, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.garage-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.g-tab {
+  background: transparent;
+  border: none;
+  color: #99a;
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 7px 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: 0.15s;
+  white-space: nowrap;
+}
+.g-tab.active {
+  background: linear-gradient(180deg, var(--cyan), #0072ff);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 242, 254, 0.45);
+}
+
+.car-header-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.car-header-bar > div { min-width: 0; flex: 1; }
+.car-morph-sub { font-size: 11px; color: #00ff87; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* TAB 1 telemetry bars */
+#panelShowroom { gap: 8px; padding: 0; }
+
+/* TAB 2 tuning workshop */
+.tuning-grid { display: none; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.tune-card {
+  background: rgba(0, 0, 0, 0.42);
+  border: 1.5px solid rgba(0, 242, 254, 0.3);
+  border-radius: 14px;
+  padding: 7px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.tune-title { font-size: 9px; font-weight: 700; color: #fff; letter-spacing: 0.04em; white-space: nowrap; }
+.tune-pips { display: flex; gap: 3px; }
+.pip { width: 11px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); }
+.pip.filled { background: #00ff87; box-shadow: 0 0 6px #00ff87; }
+.tune-btn {
+  width: 100%;
+  background: linear-gradient(180deg, var(--cyan), #0072ff);
+  border: 2px solid #fff;
+  color: #fff;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 11px;
+  padding: 5px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 3px 0 #00377a;
+}
+.tune-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #00377a; }
+.tune-btn.maxed { background: linear-gradient(180deg, #ffe033, #ff8800); border-color: #fff; color: #2b1400; box-shadow: 0 3px 0 #914a00; }
+
+/* TAB 3 neon studio */
+.paint-studio { display: none; flex-direction: column; gap: 7px; }
+.swatch-row { display: flex; justify-content: space-around; align-items: center; padding: 4px 0; }
+.neon-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: transform 0.15s;
+  box-shadow: 0 0 14px currentColor;
+}
+.neon-swatch.active { border-color: #fff; transform: scale(1.18); }
+
+/* Launch row */
+.launch-row { display: flex; gap: 8px; width: 100%; align-items: stretch; }
+.btn-headstart {
+  flex: 0.42;
+  background: linear-gradient(180deg, #ffe033, #ff8800);
+  border: 3px solid #fff;
+  color: #2b1400;
+  font-family: var(--brand);
+  font-size: 12px;
+  padding: 10px 6px;
+  border-radius: 20px;
+  cursor: pointer;
+  box-shadow: 0 6px 0 #914a00;
+  text-align: center;
+  line-height: 1.15;
+}
+.btn-headstart:active { transform: translateY(4px); box-shadow: 0 2px 0 #914a00; }
+.btn-play {
+  flex: 1;
+  width: auto;
+  background: linear-gradient(180deg, #00ff87 0%, #00c964 55%, #009e4f 100%);
+  border: 3px solid #fff;
+  color: #032b15;
+  font-family: var(--brand);
+  font-size: 19px;
+  letter-spacing: 0.04em;
+  padding: 13px 10px;
+  border-radius: 20px;
+  box-shadow: 0 6px 0 #005c2d, 0 12px 30px rgba(0, 255, 135, 0.5);
+  text-align: center;
+}
+.btn-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #005c2d, 0 6px 16px rgba(0, 255, 135, 0.4); }
